@@ -1,0 +1,19 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76ab28011bb84be428933fa40e07513a, type: 3}
+  m_Name: Office
+  m_EditorClassIdentifier: 
+  LocationName: office
+  LocationDescription: This office is big, ugly, and it has one door leading to the
+    bathroom.
+  Connections:
+  - {fileID: 11400000, guid: 437d07f8984e23c40bd9168e59a05641, type: 2}
