@@ -5,20 +5,27 @@ using TMPro;
 using Yarn.Unity;
 using System;
 using UnityEngine.Timeline;
+using System.Text.RegularExpressions;
+using System.Linq;
+using UnityEngine.UI;
 
 public class GameController : DialogueViewBase
 {
-    [SerializeField] TMP_InputField m_command, m_result;
+    [SerializeField] AudioSource m_typingSFX;
+    [SerializeField] AudioClip typingSFXClip, typingSkipClip;
+    [SerializeField] TMP_InputField m_command;
+    [SerializeField] ScrollRect m_scrollRect;
+    [SerializeField] TMP_Text m_result;
     [SerializeField] float typewriterWait;
     [SerializeField] DialogueRunner m_runner;
     [SerializeField] MarkupPalette m_palette;
+    [SerializeField] Color m_interactableColor,m_commandColor;
     IEnumerator typewriter;
-    string textToType;
+    string textToType, finalText;
     DialogueOption[] dialogueOptions;
     Action<int> onOptionSelected;
     Action onDialogueLineFinished;
     bool isTyping;
-    bool hasLine;
     
     // Start is called before the first frame update
     void Awake()
@@ -27,7 +34,20 @@ public class GameController : DialogueViewBase
         CommandDeselect();
 
     }
-    public static string PaletteMarkedUpText(Yarn.Markup.MarkupParseResult line, MarkupPalette palette, bool applyLineBreaks = true)
+    public string HighlightWords(string[] options, string s)
+    {
+        string colorTag = "<color=#" + ColorUtility.ToHtmlStringRGB(m_interactableColor) + ">";
+        string closeTag = "</color>";
+
+        foreach (string option in options)
+        {
+            string pattern = $@"(?<!{Regex.Escape(colorTag)})\b{Regex.Escape(option)}\b(?!{Regex.Escape(closeTag)})";
+            s = Regex.Replace(s, pattern, match => colorTag + match.Value + closeTag);
+        }
+        return s;
+    }
+
+    public string PaletteMarkedUpText(Yarn.Markup.MarkupParseResult line, MarkupPalette palette, bool applyLineBreaks = true)
     {
         string lineOfText = line.Text;
         line.Attributes.Sort((a, b) => (b.Position.CompareTo(a.Position)));
@@ -58,20 +78,16 @@ public class GameController : DialogueViewBase
             }
         }
         return lineOfText;
+
     }
     public override void RunLine(LocalizedLine dialogueLine, Action onDialogueLineFinished)
     {
         Yarn.Markup.MarkupParseResult text = dialogueLine.Text;
         string output = PaletteMarkedUpText(text, m_palette, true);
-        hasLine = true;
-        if(textToType != "")
-        {
-            textToType += "\n";
-        }
-        textToType += output;
+        textToType = output + "\n";
         this.onDialogueLineFinished = (Action) onDialogueLineFinished.Clone();
-        if(!isTyping)
-            Typewriter(output);
+        Typewriter(textToType);
+
     }
     // Update is called once per frame
     void Update()
@@ -83,6 +99,7 @@ public class GameController : DialogueViewBase
     public override void RunOptions(DialogueOption[] dialogueOptions, Action<int> onOptionSelected)
     {
         this.dialogueOptions = dialogueOptions;
+        m_result.text = HighlightWords(ProcessDialogueOptions(dialogueOptions), m_result.text);
         this.onOptionSelected = onOptionSelected;
         CommandSelect();
         
@@ -99,40 +116,38 @@ public class GameController : DialogueViewBase
     }
     public void SkipText()
     {
+        m_typingSFX.PlayOneShot(typingSkipClip);
         StopCoroutine(typewriter);
-        while (dialogueOptions == null && hasLine == true)
-        {
-            hasLine = false;
-            onDialogueLineFinished();
-        }
-        m_result.text = textToType;
+        
+        m_result.text = finalText;
         textToType = "";
         isTyping = false;
-        hasLine = false;
+        onDialogueLineFinished();
+
+    }
+    public static string[] ProcessDialogueOptions(DialogueOption[] dialogueOptions)
+    {
+        return dialogueOptions.Select(option =>
+        {
+            string[] words = option.Line.RawText.Split(new[] { ' ' }, 2, StringSplitOptions.RemoveEmptyEntries);
+            return words.Length > 1 ? words[1].Trim() : "";
+        }).ToArray();
     }
     public void SubmitCommand()
     {
-        if (hasLine)
+        if (isTyping)
         {
-            if (isTyping)
-            {
-                SkipText();
-            }
-            else
-            {
-                hasLine = false;
-                onDialogueLineFinished();
-            }
-        }if (dialogueOptions != null && dialogueOptions.Length > 0)
+            SkipText();
+        }else if (dialogueOptions != null && dialogueOptions.Length > 0)
         {
             if (m_command.text != "")
             {
+                m_result.text += "\n" + "<color=#" + ColorUtility.ToHtmlStringRGB(m_commandColor) + ">>" + m_command.text + "</color>\n";
                 bool optionAvailable = false;
                 foreach (var option in dialogueOptions)
                 {
                     if (m_command.text.Equals(option.Line.RawText))
                     {
-                        m_result.text = "";
                         onOptionSelected(option.DialogueOptionID);
                         dialogueOptions = null;
                         CommandDeselect();
@@ -145,6 +160,10 @@ public class GameController : DialogueViewBase
                     Typewriter("Option " + m_command.text + " is not a valid option");
                 }
             }
+        }
+        else
+        {
+            onDialogueLineFinished();
         }
         
         
@@ -166,25 +185,22 @@ public class GameController : DialogueViewBase
     IEnumerator WriteText(string text)
     {
         isTyping = true;
-
+        finalText = m_result.text + text;
         m_command.text = "";
-        if (m_result.text != "")
-            m_result.text += "\n";
         foreach (char letter in text)
         {
+            m_typingSFX.PlayOneShot(typingSFXClip);
             m_result.text += letter;
+            m_scrollRect.verticalNormalizedPosition = 0f;
             yield return new WaitForSeconds(typewriterWait);
         }
 
 
         isTyping = false;
-        if (hasLine)
-        {
-            hasLine = false;
-            onDialogueLineFinished();
-        }
+
+        onDialogueLineFinished();
     }
 
-   
+
 
 }

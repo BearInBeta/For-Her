@@ -1,11 +1,11 @@
 ﻿title: Start
 ---
 You are in an old decrepet office, staring from the window besides the dirty desk.
-[i]It has been raining non-stop for three days now[/i]. The window is lined with tiny ice particles from the outside.
+It has been raining non-stop for three days now. The window is lined with tiny ice particles from the outside.
 It's cold. Very cold.
 On the desk there is a picture. A man and a woman. Next to it, a phone, [select value={$phoneplugged} True="plugged" False="unplugged" /].
 
--> pick up phone
+-> use phone
     <<if $phoneplugged == false>>
             You hear nothing.
             ->go back
@@ -13,7 +13,7 @@ On the desk there is a picture. A man and a woman. Next to it, a phone, [select 
     <<else>>
             You pick up the phone. A low pitched tune plays, waiting for you to call someone.
             ->call 555-111-222
-                After three distinct tunes, you hear her voice: Hello, this is Eliza, I cannot reach the phone right now but feel free to leave a message after the tone.
+                After three distinct tunes, you hear her voice: [i]Hello, this is Eliza, I cannot reach the phone right now but feel free to leave a message after the tone.[/i]
             ->go back
             <<jump Start>>
     <<endif>>
@@ -21,7 +21,7 @@ On the desk there is a picture. A man and a woman. Next to it, a phone, [select 
     The phone is now plugged.
     <<set $phoneplugged to true>>
     <<jump Start>>
--> inspect photo
+-> inspect picture
     The man's face resembles yours, but he's much more young, energetic, and alive.
     The woman, happy to be next to him. On the back of the photo, the number 555-111-222 is written.
     <<jump Start>>
