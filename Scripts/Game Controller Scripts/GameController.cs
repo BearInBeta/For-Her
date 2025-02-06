@@ -122,7 +122,18 @@ public class GameController : DialogueViewBase
     }
     /* End DialogueViewBase */
 
+   string GetBasicCommand(string command)
+    {
+        foreach(List<string> commands in this.commands)
+        {
+            if (commands.Contains(command))
+            {
+                return commands.First();
+            }
+        }
 
+        return command;
+    }
     /* Interaction */
     public void SubmitCommand()
     {
@@ -138,11 +149,10 @@ public class GameController : DialogueViewBase
                     
                 command = RemoveFluffWords(command);
 
-                string commandWord = CorrectSentence(SplitLastWord(command).Item1.Trim());
+                string commandWord = GetBasicCommand(CorrectSentence(SplitLastWord(command).Item1.Trim()));
                 string subjectWord = spellChecker.GetBestCorrection(SplitLastWord(command).Item2.Trim());
                 command = commandWord + " " + subjectWord;
                 m_result.text += "\n" + "<color=#" + ColorUtility.ToHtmlStringRGB(m_commandColor) + ">>" + m_command.text + "</color>\n";
-                bool optionAvailable = false;
                 foreach (var option in dialogueOptions)
                 {
                     if (command.Equals(option.Line.RawText))
@@ -150,14 +160,15 @@ public class GameController : DialogueViewBase
                         onOptionSelected(option.DialogueOptionID);
                         dialogueOptions = null;
                         CommandDeselect();
-                        optionAvailable = true;
+                        awaitingOptions = false;
+                        return;
                     }
 
                 }
-                if (!optionAvailable)
-                {
-                    Typewriter("Option " + command + " is not a valid option");
-                }
+                Typewriter("Option " + m_command.text + " is not a valid option");
+               
+
+
             }
         }
         else

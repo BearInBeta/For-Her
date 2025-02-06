@@ -30,7 +30,6 @@ public class CSVReader
                 dataArray[i] = rowData;
             }
 
-            Debug.Log("CSV Loaded Successfully");
         }
         catch (Exception e)
         {
@@ -58,7 +57,6 @@ public class CSVReader
                 }
             }
 
-            Debug.Log("CSV First Column Loaded Successfully");
         }
         catch (Exception e)
         {
