@@ -11,7 +11,7 @@ using UnityEngine.UI;
 
 public class GameController : DialogueViewBase
 {
-    [SerializeField] AudioSource m_typingSFX;
+    [SerializeField] AudioSource m_typingSFX, m_gameSFX;
     [SerializeField] AudioClip typingSFXClip, typingSkipClip;
     [SerializeField] TMP_InputField m_command;
     [SerializeField] ScrollRect m_scrollRect;
@@ -56,6 +56,25 @@ public class GameController : DialogueViewBase
 
     /* Standard Monobehaviour End*/
 
+    /*Yarn Commands*/
+
+    [YarnCommand("playsfx")]
+    public void PlaySFX(string sfxName)
+    {
+        // Load the audio clip from the Resources folder
+        AudioClip clip = Resources.Load<AudioClip>($"SFX/{sfxName}");
+
+        if (clip != null)
+        {
+            m_gameSFX.PlayOneShot(clip);
+        }
+        else
+        {
+            Debug.LogWarning($"SFX '{sfxName}' not found in Resources/SFX/");
+        }
+    }
+
+    /* End Yarn Commands */
 
 
     /* DialogueViewBase */
@@ -250,6 +269,7 @@ public class GameController : DialogueViewBase
     /* End Interaction */
 
     /*Helpful*/
+
     public string RemoveFluffWords(string input)
     {
         List<string> words = input.Split(' ').ToList();

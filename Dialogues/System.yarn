@@ -6,18 +6,20 @@ It's cold. Very cold.
 On the desk there is a picture. A man and a woman. Next to it, a phone, [select value={$phoneplugged} True="plugged" False="unplugged" /].
 
 -> use phone
+    <<playsfx GameController Click>>
     <<if $phoneplugged == false>>
             You hear nothing.
             ->go back
             <<jump Start>>
     <<else>>
+            <<playsfx GameController Beep>>
             You pick up the phone. A low pitched tune plays, waiting for you to call someone.
             ->call 555-111-222
                 After three distinct tunes, you hear her voice: [i]Hello, this is Eliza, I cannot reach the phone right now but feel free to leave a message after the tone.[/i]
             ->go back
             <<jump Start>>
     <<endif>>
--> plug phone
+-> fix phone
     The phone is now plugged.
     <<set $phoneplugged to true>>
     <<jump Start>>
