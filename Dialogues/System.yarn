@@ -1,30 +1,18 @@
 ﻿title: Start
 ---
-You are in an old decrepet office, staring from the window besides the dirty desk.
-It has been raining non-stop for three days now. The window is lined with tiny ice particles from the outside.
-It's cold. Very cold.
-On the desk there is a picture. A man and a woman. Next to it, a phone, [select value={$phoneplugged} True="plugged" False="unplugged" /].
+<<set $inputVariable = "">>
+>>> SYSTEM BOOTING...<br>>>> MEMORY CHECK: 198 KB FREE<br>>>> USERNAME:#textinput
 
--> use phone
-    <<if $phoneplugged == false>>
-            You hear nothing.
-            ->go back
-            <<jump Start>>
-    <<else>>
-            You pick up the phone. A low pitched tune plays, waiting for you to call someone.
-            ->call 555-111-222
-                After three distinct tunes, you hear her voice: [i]Hello, this is Eliza, I cannot reach the phone right now but feel free to leave a message after the tone.[/i]
-            ->go back
-            <<jump Start>>
-    <<endif>>
--> plug phone
-    The phone is now plugged.
-    <<set $phoneplugged to true>>
-    <<jump Start>>
--> inspect picture
-    The man's face resembles yours, but he's much more young, energetic, and alive.
-    The woman, happy to be next to him. On the back of the photo, the number 555-111-222 is written.
-    <<jump Start>>
+->waitinginput
+<<set $playerName = $inputVariable>>
+Hello, {$playerName}
 
-Anyway, time to get writing!
+<<jump Room>>
+===
+title: Room
+---
+Here we are in a different node! Nodes let you divide up your content into different blocks, which makes it easier to manage.
+
+We're all done! Try changing the text in the editor to the left, and clicking Test again!
+->waitinginput
 ===

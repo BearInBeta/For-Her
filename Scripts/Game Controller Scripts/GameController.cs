@@ -8,6 +8,7 @@ using UnityEngine.Timeline;
 using System.Text.RegularExpressions;
 using System.Linq;
 using UnityEngine.UI;
+using Yarn;
 
 public class GameController : DialogueViewBase
 {
@@ -28,12 +29,16 @@ public class GameController : DialogueViewBase
     Action onDialogueLineFinished;
     bool isTyping;
     bool awaitingOptions;
+    bool lastLine;
     List<string>[] commands;
     List<string> words;
     SpellChecker spellChecker, specialChecker;
+    bool textInput;
+    Stack<string> rooms;
     /* Standard Monobehaviour*/
     void Awake()
     {
+        rooms = new Stack<string>();
         textToType = "";
         CommandDeselect();
 
@@ -58,14 +63,25 @@ public class GameController : DialogueViewBase
 
 
 
+    
     /* DialogueViewBase */
     public override void RunLine(LocalizedLine dialogueLine, Action onDialogueLineFinished)
     {
+        if (!rooms.Contains(m_runner.CurrentNodeName))
+        {
+            rooms.Push(m_runner.CurrentNodeName);
+        }
         Yarn.Markup.MarkupParseResult text = dialogueLine.Text;
         string output = PaletteMarkedUpText(text, m_palette, true);
         textToType = output + "\n";
         this.onDialogueLineFinished = (Action)onDialogueLineFinished.Clone();
         Typewriter(textToType);
+        lastLine = dialogueLine.Metadata != null && dialogueLine.Metadata.Contains("lastline");
+        textInput = dialogueLine.Metadata != null && dialogueLine.Metadata.Contains("textinput");
+        if(textInput)
+        {
+            CommandSelect();
+        }
 
     }
     public override void RunOptions(DialogueOption[] dialogueOptions, Action<int> onOptionSelected)
@@ -122,7 +138,18 @@ public class GameController : DialogueViewBase
     }
     /* End DialogueViewBase */
 
-   string GetBasicCommand(string command)
+    int GetOptionID(string command)
+    {
+        foreach (var option in dialogueOptions)
+        {
+            if (command.Equals(option.Line.RawText))
+            {
+                return option.DialogueOptionID;
+            }
+        }
+        return -1;
+    }
+    string GetBasicCommand(string command)
     {
         foreach(List<string> commands in this.commands)
         {
@@ -141,29 +168,81 @@ public class GameController : DialogueViewBase
         {
             SkipText();
         }
+        else if (textInput)
+        {
+            if(m_command.text.Length > 10 || m_command.text.Length < 1 || Regex.IsMatch(m_command.text, @"[\d\W]"))
+            {
+                m_result.text += "<color=#" + ColorUtility.ToHtmlStringRGB(m_commandColor) + ">>" + m_command.text + "</color>\n";
+                m_result.text += "<color=#" + ColorUtility.ToHtmlStringRGB(m_commandColor) + ">INVALID INPUT</color>\n";
+            }
+            else
+            {
+                m_result.text = "";
+                m_runner.VariableStorage.SetValue("$inputVariable", m_command.text);
+                int commandResult = GetOptionID("waitinginput");
+                if (commandResult != -1)
+                {
+                    onOptionSelected(commandResult);
+                    dialogueOptions = null;
+                    CommandDeselect();
+                    awaitingOptions = false;
+                    return;
+                }
+                FinishDialogue(onDialogueLineFinished);
+            }
+        }
         else if (dialogueOptions != null && dialogueOptions.Length > 0)
         {
             if (m_command.text != "")
             {
+
+                m_result.text = "";
                 string command = m_command.text.ToLower();
-                    
+
+                if (command == "look around")
+                {
+                    string currentRoom = m_runner.CurrentNodeName;
+                    dialogueOptions = null;
+                    CommandDeselect();
+                    awaitingOptions = false;
+                    CommandDeselect();
+                    m_runner.Stop();
+                    m_runner.StartDialogue(currentRoom);
+                    return;
+                }
+                if (command == "go back")
+                {
+                    if(rooms.Count <= 1)
+                    {
+                        m_result.text += "<color=#" + ColorUtility.ToHtmlStringRGB(m_commandColor) + ">>" + m_command.text + "</color>\n";
+                        Typewriter("Nothing to go back to...");
+                        return;
+                    }
+                    rooms.Pop();
+                    string currentRoom = rooms.Peek();
+                    dialogueOptions = null;
+                    CommandDeselect();
+                    awaitingOptions = false;
+                    CommandDeselect();
+                    m_runner.Stop();
+                    m_runner.StartDialogue(currentRoom);
+                    return;
+                }
+
                 command = RemoveFluffWords(command);
 
                 string commandWord = GetBasicCommand(CorrectSentence(SplitLastWord(command).Item1.Trim()));
                 string subjectWord = spellChecker.GetBestCorrection(SplitLastWord(command).Item2.Trim());
                 command = commandWord + " " + subjectWord;
-                m_result.text += "\n" + "<color=#" + ColorUtility.ToHtmlStringRGB(m_commandColor) + ">>" + m_command.text + "</color>\n";
-                foreach (var option in dialogueOptions)
+                m_result.text += "<color=#" + ColorUtility.ToHtmlStringRGB(m_commandColor) + ">>" + m_command.text + "</color>\n";
+                int commandResult = GetOptionID(command);
+                if (commandResult != -1)
                 {
-                    if (command.Equals(option.Line.RawText))
-                    {
-                        onOptionSelected(option.DialogueOptionID);
-                        dialogueOptions = null;
-                        CommandDeselect();
-                        awaitingOptions = false;
-                        return;
-                    }
-
+                    onOptionSelected(commandResult);
+                    dialogueOptions = null;
+                    CommandDeselect();
+                    awaitingOptions = false;
+                    return;
                 }
                 Typewriter("Option " + m_command.text + " is not a valid option");
                
@@ -244,7 +323,8 @@ public class GameController : DialogueViewBase
 
 
         isTyping = false;
-        FinishDialogue(onDialogueLineFinished);
+        if (lastLine)
+            FinishDialogue(onDialogueLineFinished);
     }
 
     /* End Interaction */
