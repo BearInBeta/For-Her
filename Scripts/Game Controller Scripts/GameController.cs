@@ -35,9 +35,11 @@ public class GameController : DialogueViewBase
     SpellChecker spellChecker, specialChecker;
     bool textInput;
     Stack<string> rooms;
+    string currentYear;
     /* Standard Monobehaviour*/
     void Awake()
     {
+        currentYear = "1987";
         rooms = new Stack<string>();
         textToType = "";
         CommandDeselect();
@@ -86,10 +88,27 @@ public class GameController : DialogueViewBase
     /* DialogueViewBase */
     public override void RunLine(LocalizedLine dialogueLine, Action onDialogueLineFinished)
     {
-        if (!rooms.Contains(m_runner.CurrentNodeName))
+        if (m_runner.CurrentNodeName.ToLower() != "start")
         {
-            rooms.Push(m_runner.CurrentNodeName);
+            string currentRoom = "";
+            if (m_runner.CurrentNodeName.Contains("_")) {
+                currentRoom = m_runner.CurrentNodeName.Substring(0, m_runner.CurrentNodeName.IndexOf('_') + 1);
+                currentYear = m_runner.CurrentNodeName.Substring(m_runner.CurrentNodeName.IndexOf('_') + 1);
+            }
+            else
+            {
+                currentRoom = m_runner.CurrentNodeName;
+            }        
+            if(!rooms.Contains(currentRoom))
+                rooms.Push(currentRoom);
+            
         }
+        string printer = "";
+        foreach(string room in rooms)
+        {
+            printer += room;
+        }
+        print(printer);
         Yarn.Markup.MarkupParseResult text = dialogueLine.Text;
         string output = PaletteMarkedUpText(text, m_palette, true);
         textToType = output + "\n";
@@ -239,6 +258,9 @@ public class GameController : DialogueViewBase
                     }
                     rooms.Pop();
                     string currentRoom = rooms.Peek();
+                    if (currentRoom.Contains("_")){
+                        currentRoom = currentRoom + currentYear;
+                    }
                     dialogueOptions = null;
                     CommandDeselect();
                     awaitingOptions = false;
