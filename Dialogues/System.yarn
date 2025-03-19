@@ -7,7 +7,7 @@
 <<set $playerName = $inputVariable>>
 Hello, {$playerName}
 
-<<jump Office_1987>>
+<<jump Office_1985>>
 ===
 title: Office_1987
 ---
@@ -30,14 +30,23 @@ The drawer is empty.
 ===
 title: Office_1985
 ---
-You are in an office in 1985, there is a drawer, and a window.
+You are in an office in 1985, there is a drawer, and a window. A man enters the room.
 ->inspect drawer
 	<<jump Drawer_1985>>
 ->inspect window
 	<<jump Window>>
+->question man
+	<<jump James>>
 ===
 title: Window
 ---
 The window is nice.
 ->waitinginput
+===
+title: James
+---
+Hello, my name is James.
+What do you want to ask about?
+->book
+	I am reading the adventures of Don Quixote
 ===

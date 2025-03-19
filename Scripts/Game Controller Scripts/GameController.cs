@@ -272,9 +272,10 @@ public class GameController : DialogueViewBase
 
                 command = RemoveFluffWords(command);
 
-                string commandWord = GetBasicCommand(CorrectSentence(SplitLastWord(command).Item1.Trim()));
+                string commandWord = GetBasicCommand(spellChecker.GetBestCorrection(SplitLastWord(command).Item1.Trim()));
                 string subjectWord = spellChecker.GetBestCorrection(SplitLastWord(command).Item2.Trim());
                 command = commandWord + " " + subjectWord;
+                command = command.Trim();
                 m_result.text += "<color=#" + ColorUtility.ToHtmlStringRGB(m_commandColor) + ">>" + m_command.text + "</color>\n";
                 int commandResult = GetOptionID(command);
                 if (commandResult != -1)
@@ -285,7 +286,7 @@ public class GameController : DialogueViewBase
                     awaitingOptions = false;
                     return;
                 }
-                Typewriter("Option " + m_command.text + " is not a valid option");
+                Typewriter("Option " + command + " is not a valid option");
                
 
 
