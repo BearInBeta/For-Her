@@ -29,12 +29,11 @@ public class GameController : DialogueViewBase
     [SerializeField] private float typewriterWait = 0.02f;
 
     [Header("Colors")]
-    [SerializeField] private Color m_interactableColor;
-    [SerializeField] private Color m_commandColor;
+    [SerializeField] private Color m_interactableColor, m_infocolor, m_commandColor, m_dialogueColor, m_systemColor, m_errorColor;
 
-    [Header("Language/Grammar")]
+    [Header("Defined Values")]
     [SerializeField] private string[] fluff = { "the", "and", "is", "in", "at", "of", "a", "to" };
-
+    [SerializeField] private string systemName;
     /* ===============================
      * 🧠 Private Variables
      * =============================== */
@@ -107,24 +106,28 @@ public class GameController : DialogueViewBase
         // Track visited rooms based on Yarn node name
         if (m_runner.CurrentNodeName.ToLower() != "start")
         {
-            string currentRoom = "";
-            if (m_runner.CurrentNodeName.Contains("_"))
-            {
-                currentRoom = m_runner.CurrentNodeName.Substring(0, m_runner.CurrentNodeName.IndexOf('_') + 1);
-                currentYear = m_runner.CurrentNodeName.Substring(m_runner.CurrentNodeName.IndexOf('_') + 1);
-            }
-            else currentRoom = m_runner.CurrentNodeName;
+            string currentRoom = m_runner.CurrentNodeName;
 
             if (!rooms.Contains(currentRoom))
                 rooms.Push(currentRoom);
         }
 
-        // Debug: Print visited rooms stack
-        Debug.Log(string.Join("", rooms));
-
         // Parse and color Yarn text using palette
+        string charName = dialogueLine.CharacterName;
         Yarn.Markup.MarkupParseResult text = dialogueLine.Text;
-        string output = PaletteMarkedUpText(text, m_palette, true);
+        string output = "";
+        if (charName != null && charName != "")
+        {
+            if(charName == systemName)
+               output = $"<color=#{ColorUtility.ToHtmlStringRGB(m_systemColor)}>>{PaletteMarkedUpText(text, m_palette, true)}</color>";
+            else
+                output = $"<color=#{ColorUtility.ToHtmlStringRGB(m_dialogueColor)}>>{PaletteMarkedUpText(text, m_palette, true)}</color>";
+
+        }
+        else
+        {
+            output = $"<color=#{ColorUtility.ToHtmlStringRGB(m_infocolor)}>>{PaletteMarkedUpText(text, m_palette, true)}</color>";
+        }
         textToType = output + "\n";
 
         this.onDialogueLineFinished = (Action)onDialogueLineFinished.Clone();
@@ -213,7 +216,7 @@ public class GameController : DialogueViewBase
         {
             if (m_command.text.Length > 10 || m_command.text.Length < 1 || Regex.IsMatch(m_command.text, @"[\d\W]"))
             {
-                m_result.text += $"<color=#{ColorUtility.ToHtmlStringRGB(m_commandColor)}>INVALID INPUT</color>\n";
+                Typewriter($"<color=#{ColorUtility.ToHtmlStringRGB(m_errorColor)}>INVALID INPUT</color>\n");
                 return;
             }
 
@@ -287,7 +290,7 @@ public class GameController : DialogueViewBase
             return;
         }
 
-        Typewriter($"Option '{command}' is not a valid option\n");
+        Typewriter($"<color=#{ColorUtility.ToHtmlStringRGB(m_errorColor)}>Option '{command}' is not a valid option</color>\n");
     }
 
     private void RestartDialogue(string nodeName)

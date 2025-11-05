@@ -1,52 +1,39 @@
 ﻿title: Start
 ---
 <<set $inputVariable = "">>
->>> SYSTEM BOOTING...<br>>>> MEMORY CHECK: 198 KB FREE<br>>>> USERNAME:#textinput
+[character name=""][/character]>> SYSTEM BOOTING...<br>>>> MEMORY CHECK:198 KB FREE<br>>>> ENTER USERNAME:#textinput
 
 ->waitinginput
 <<set $playerName = $inputVariable>>
 Hello, {$playerName}
 
-<<jump Office_1985>>
+>>> Connecting to R-Unit...
+|||||||||||||||||||||||||||
+SUCCESS! Connected to unit RD-T5
+RD-T5: Hello! I am RD-T5, your trusty Evidence Collection & Analysis Android
+RD-T5: Would you like to undergo a short guide on using the system? Y/N
+->y
+	<<jump Tutorial>>
+->n
+	<<jump Office>>
+
+<<jump Office>>
+
 ===
-title: Office_1987
+title: Tutorial
+---
+RD-T5: There is a red door and a blue door. You can ask me to inspect the doors by using the <command>INSPECT</command> command, say something like INSPECT Red Door.
+<info>Command <command>INSPECT</command> now unlocked</info>
+->inspect drawer
+	<<jump Tutorial>>
+->inspect window
+	<<jump Office>>
+===
+title: Office
 ---
 You are in an office in 1987, there is a drawer, and a window.
 ->inspect drawer
 	<<jump Drawer_1987>>
 ->inspect window
 	<<jump Window>>
-===
-title: Drawer_1987
----
-The drawer has a gun in it.
-->take gun
-	<<jump Drawer_1985>>
-===
-title: Drawer_1985
----
-The drawer is empty.
-->waitinginput
-===
-title: Office_1985
----
-You are in an office in 1985, there is a drawer, and a window. A man enters the room.
-->inspect drawer
-	<<jump Drawer_1985>>
-->inspect window
-	<<jump Window>>
-->question man
-	<<jump James>>
-===
-title: Window
----
-The window is nice.
-->waitinginput
-===
-title: James
----
-Hello, my name is James.
-What do you want to ask about?
-->book
-	I am reading the adventures of Don Quixote
 ===
