@@ -8,9 +8,18 @@ using UnityEngine;
 using UnityEngine.UI;
 using Yarn.Unity;
 using Yarn;
+using static Unity.Burst.Intrinsics.X86.Avx;
+using System.Xml.Linq;
 
 public class GameController : DialogueViewBase
 {
+    [Serializable]
+    public class TagColor
+    {
+        public string tag;
+        public Color color;
+    }
+
     /* ===============================
      * 🧩 Serialized Fields (Editor Setup)
      * =============================== */
@@ -22,6 +31,7 @@ public class GameController : DialogueViewBase
     [SerializeField] private TMP_InputField m_command;
     [SerializeField] private ScrollRect m_scrollRect;
     [SerializeField] private TMP_Text m_result;
+    [SerializeField] private TMP_Text m_locationText;
 
     [Header("Dialogue")]
     [SerializeField] private DialogueRunner m_runner;
@@ -29,7 +39,7 @@ public class GameController : DialogueViewBase
     [SerializeField] private float typewriterWait = 0.02f;
 
     [Header("Colors")]
-    [SerializeField] private Color m_interactableColor, m_infocolor, m_commandColor, m_dialogueColor, m_systemColor, m_errorColor;
+    [SerializeField] private List<TagColor> tagColorList = new List<TagColor>();
 
     [Header("Defined Values")]
     [SerializeField] private string[] fluff = { "the", "and", "is", "in", "at", "of", "a", "to" };
@@ -38,27 +48,37 @@ public class GameController : DialogueViewBase
      * 🧠 Private Variables
      * =============================== */
     private IEnumerator typewriter;
-    private string textToType, finalText, currentYear;
+    private string textToType, finalText;
     private DialogueOption[] dialogueOptions;
     private Action<int> onOptionSelected;
     private Action onDialogueLineFinished;
 
     private bool isTyping;
     private bool awaitingOptions;
-    private bool lastLine;
     private bool textInput;
+    private bool unskippable;
 
     private List<string>[] commands;
     private List<string> words;
     private SpellChecker spellChecker, specialChecker;
     private Stack<string> rooms;
+    private Dictionary<string, Color> tagColorMap;
 
     /* ===============================
      * 🧱 Unity Lifecycle Methods
      * =============================== */
     private void Awake()
     {
-        currentYear = "1987";
+
+        // Convert list to dictionary for quick lookup
+        tagColorMap = new Dictionary<string, Color>();
+        foreach (var entry in tagColorList)
+        {
+            if (!string.IsNullOrEmpty(entry.tag) && !tagColorMap.ContainsKey(entry.tag))
+                tagColorMap.Add(entry.tag, entry.color);
+        }
+
+
         rooms = new Stack<string>();
         textToType = "";
         CommandDeselect();
@@ -76,6 +96,8 @@ public class GameController : DialogueViewBase
 
     private void Update()
     {
+     
+        m_locationText.text = $"LOCATION: {(rooms?.Count != 0 ? rooms.Peek() : "Connecting...")}";
         // Allow Enter key to submit commands
         if (Input.GetKeyDown(KeyCode.Return))
         {
@@ -101,41 +123,51 @@ public class GameController : DialogueViewBase
      * 💬 DialogueViewBase Overrides
      * =============================== */
 
-    public override void RunLine(LocalizedLine dialogueLine, Action onDialogueLineFinished)
+    private void CheckRoom()
     {
-        // Track visited rooms based on Yarn node name
         if (m_runner.CurrentNodeName.ToLower() != "start")
         {
             string currentRoom = m_runner.CurrentNodeName;
 
             if (!rooms.Contains(currentRoom))
+            {
                 rooms.Push(currentRoom);
+                Typewriter($"<system>{systemName}: CURRENT LOCATION: {currentRoom}</system>");
+            }
         }
+    }
+    public override void RunLine(LocalizedLine dialogueLine, Action onDialogueLineFinished)
+    {
+        // Track visited rooms based on Yarn node name
+        CheckRoom();
 
         // Parse and color Yarn text using palette
         string charName = dialogueLine.CharacterName;
         Yarn.Markup.MarkupParseResult text = dialogueLine.Text;
-        string output = "";
-        if (charName != null && charName != "")
+        string output;
+        bool nocharacter = dialogueLine.Metadata?.Contains("nocharacter") == true;
+        bool nochevron = dialogueLine.Metadata?.Contains("nochevron") == true;
+        if (charName != null && charName != "" && !nocharacter)
         {
             if(charName == systemName)
-               output = $"<color=#{ColorUtility.ToHtmlStringRGB(m_systemColor)}>>{PaletteMarkedUpText(text, m_palette, true)}</color>";
+               output = $"<system>{(!nochevron ? "> " : "")}{PaletteMarkedUpText(text, m_palette, true)}</system>";
             else
-                output = $"<color=#{ColorUtility.ToHtmlStringRGB(m_dialogueColor)}>>{PaletteMarkedUpText(text, m_palette, true)}</color>";
+                output = $"<dialogue>{(!nochevron ? "> " : "")}{PaletteMarkedUpText(text, m_palette, true)}</dialogue>";
 
         }
         else
         {
-            output = $"<color=#{ColorUtility.ToHtmlStringRGB(m_infocolor)}>>{PaletteMarkedUpText(text, m_palette, true)}</color>";
+            output = $"<info>{(!nochevron ? "> " : "")}{PaletteMarkedUpText(text, m_palette, true)}</info>";
         }
-        textToType = output + "\n";
+        textToType = output;
 
         this.onDialogueLineFinished = (Action)onDialogueLineFinished.Clone();
-        Typewriter(textToType);
 
         // Metadata handling (e.g., "lastline" or "textinput")
-        lastLine = dialogueLine.Metadata?.Contains("lastline") == true;
+        //lastLine = dialogueLine.Metadata?.Contains("lastline");
         textInput = dialogueLine.Metadata?.Contains("textinput") == true;
+        unskippable = dialogueLine.Metadata?.Contains("unskippable") == true;
+        Typewriter(textToType, false, unskippable);
 
         if (textInput)
             CommandSelect();
@@ -143,9 +175,14 @@ public class GameController : DialogueViewBase
 
     public override void RunOptions(DialogueOption[] dialogueOptions, Action<int> onOptionSelected)
     {
+        // Track visited rooms based on Yarn node name
+       
         awaitingOptions = true;
         this.dialogueOptions = dialogueOptions;
         this.onOptionSelected = onOptionSelected;
+
+        CheckRoom();
+
         CommandSelect();
     }
 
@@ -154,7 +191,14 @@ public class GameController : DialogueViewBase
         if (!awaitingOptions)
             action?.Invoke();
     }
-
+    public override void DialogueComplete()
+    {
+        // If we are not waiting for input or options, restart the room
+        if (!awaitingOptions && !textInput)
+        {
+            StartCoroutine(RestartRoomNextFrame());
+        }
+    }
     /* ===============================
      * 🧾 Text & Markup Handling
      * =============================== */
@@ -194,15 +238,48 @@ public class GameController : DialogueViewBase
         return lineOfText;
     }
 
+    /// Replaces special tags (like <interactable>...</interactable>) with rich text color tags.
+    public string ReplaceTagsWithColors(string input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return input;
+
+        foreach (var kvp in tagColorMap)
+        {
+            string tag = kvp.Key;
+            string htmlColor = ColorUtility.ToHtmlStringRGB(kvp.Value);
+            string openPattern = $"<{tag}>";
+            string closePattern = $"</{tag}>";
+
+            input = ReplaceNestedTags(input, tag, $"<color=#{htmlColor}>", "</color>");
+        }
+
+        return input;
+    }
+
+    /// Recursively replaces nested occurrences of a tag with a replacement.
+    private string ReplaceNestedTags(string input, string tag, string openReplacement, string closeReplacement)
+    {
+        string pattern = $@"<{tag}>(.*?)</{tag}>";
+        while (Regex.IsMatch(input, pattern, RegexOptions.Singleline))
+        {
+            input = Regex.Replace(input, pattern, match =>
+            {
+                string innerContent = match.Groups[1].Value;
+                // Recurse for inner tags of the same type
+                innerContent = ReplaceNestedTags(innerContent, tag, openReplacement, closeReplacement);
+                return $"{openReplacement}{innerContent}{closeReplacement}";
+            }, RegexOptions.Singleline);
+        }
+        return input;
+    }
+
     /* ===============================
      * 💻 Command Input Handling
      * =============================== */
 
     public void SubmitCommand()
     {
-        // Print the player's input in color
-        if (m_command.text.Trim() != "")
-            m_result.text += $"<color=#{ColorUtility.ToHtmlStringRGB(m_commandColor)}>>{m_command.text}</color>\n";
 
         // Skip typing effect if mid-type
         if (isTyping)
@@ -210,17 +287,29 @@ public class GameController : DialogueViewBase
             SkipText();
             return;
         }
+        string commandText = m_command.text.Trim();
+        // Print the player's input in color
+        if (commandText != "")
+        {
+            Typewriter($"<command>>{commandText}</command>", true);
+
+        }
+        else
+        {
+            CommandSelect();
+            return;
+        }
 
         // Handle special "text input" case
         if (textInput)
         {
-            if (m_command.text.Length > 10 || m_command.text.Length < 1 || Regex.IsMatch(m_command.text, @"[\d\W]"))
+            if (commandText.Length > 10 || commandText.Length < 1 || Regex.IsMatch(commandText, @"[\d\W]"))
             {
-                Typewriter($"<color=#{ColorUtility.ToHtmlStringRGB(m_errorColor)}>INVALID INPUT</color>\n");
+                Typewriter($"<error>INVALID INPUT: {commandText}</error>");
                 return;
             }
 
-            m_runner.VariableStorage.SetValue("$inputVariable", m_command.text);
+            m_runner.VariableStorage.SetValue("$inputVariable", commandText);
             int commandResult = GetOptionID("waitinginput");
 
             if (commandResult != -1)
@@ -237,7 +326,7 @@ public class GameController : DialogueViewBase
         // Handle selectable dialogue options
         if (dialogueOptions != null && dialogueOptions.Length > 0)
         {
-            HandleDialogueCommand();
+            HandleDialogueCommand(commandText);
         }
         else
         {
@@ -245,14 +334,16 @@ public class GameController : DialogueViewBase
         }
     }
 
-    private void HandleDialogueCommand()
+    private void HandleDialogueCommand(string commandText)
     {
-        string command = m_command.text.ToLower();
+        string ogcommand = commandText.ToLower();
+        string command = ogcommand;
+
 
         // Restart current node
-        if (command == "look around")
+        if (command == "location")
         {
-            RestartDialogue(m_runner.CurrentNodeName);
+            RestartRoom();
             return;
         }
 
@@ -261,36 +352,67 @@ public class GameController : DialogueViewBase
         {
             if (rooms.Count <= 1)
             {
-                Typewriter("Nothing to go back to...");
+                Typewriter("<error>Nothing to go back to...</error>");
                 return;
             }
 
             rooms.Pop();
-            string currentRoom = rooms.Peek();
-            if (currentRoom.Contains("_"))
-                currentRoom += currentYear;
-
-            RestartDialogue(currentRoom);
+            Typewriter($"<system>{systemName}: CURRENT LOCATION: {rooms.Peek()}");
+            RestartRoom();
             return;
         }
 
         // Clean and correct command text
         command = RemoveFluffWords(command);
-        (string cmd, string subject) = SplitLastWord(command);
 
+        string[] splitWords = command.Trim().Split(' ');
+
+        if(splitWords.Length > 5)
+        {
+            Typewriter($"<error>'{command}' is not a valid option</error>");
+            return;
+        }
+        for (int i = 0; i < splitWords.Length; i++)
+        {
+            string cmd = "";
+            string subject = "";
+            for(int j = 0; j < i; j++)
+            {
+                cmd += splitWords[j] + " ";
+            }
+            cmd = cmd.Trim();
+
+            for (int j = i; j < splitWords.Length; j++)
+            {
+                subject += splitWords[j] + " ";
+            }
+            subject = subject.Trim();
+
+
+            int commandResult = checkOption(cmd, subject);
+            if (commandResult != -1)
+            {
+                ResetCommandState();
+                onOptionSelected?.Invoke(commandResult);
+                return;
+            }
+        }
+        Typewriter($"<error>Option '{ogcommand}' is not a valid option</error>");
+    }
+
+    private int checkOption(string cmd, string subject)
+    {
+        string command = $"{cmd} {subject}".Trim();
+        int basicInput = GetOptionID(command);
+        if (basicInput != -1)
+        {
+            return basicInput;
+        }
         string commandWord = GetBasicCommand(spellChecker.GetBestCorrection(cmd.Trim()));
         string subjectWord = spellChecker.GetBestCorrection(subject.Trim());
         command = $"{commandWord} {subjectWord}".Trim();
 
-        int commandResult = GetOptionID(command);
-        if (commandResult != -1)
-        {
-            onOptionSelected?.Invoke(commandResult);
-            ResetCommandState();
-            return;
-        }
-
-        Typewriter($"<color=#{ColorUtility.ToHtmlStringRGB(m_errorColor)}>Option '{command}' is not a valid option</color>\n");
+        return GetOptionID(command);
     }
 
     private void RestartDialogue(string nodeName)
@@ -308,35 +430,59 @@ public class GameController : DialogueViewBase
         CommandDeselect();
         awaitingOptions = false;
     }
+    private void RestartRoom()
+    {
+        string currentRoom = rooms.Peek();
+        RestartDialogue(currentRoom);
+    }
 
+    private IEnumerator RestartRoomNextFrame()
+    {
+        yield return null; // Let Yarn fully shut down
+
+        RestartRoom();
+    }
     /* ===============================
      * ✍️ Typewriter Effect
      * =============================== */
 
-    public void Typewriter(string text)
+    public void Typewriter(string text, bool skip = false, bool unskippable = false)
     {
-        typewriter = WriteText(text);
+        this.unskippable = unskippable;
+        text = ReplaceTagsWithColors(text) + "\n";
+        typewriter = WriteText(text, skip);
         StartCoroutine(typewriter);
     }
 
     public void SkipText()
     {
-        m_typingSFX.PlayOneShot(typingSkipClip);
-        StopCoroutine(typewriter);
+        if (!unskippable)
+        {
+            m_typingSFX.PlayOneShot(typingSkipClip);
+            StopCoroutine(typewriter);
 
-        m_result.text = finalText;
-        textToType = "";
-        isTyping = false;
-        FinishDialogue(onDialogueLineFinished);
+            m_result.text = finalText;
+            textToType = "";
+            isTyping = false;
+            FinishDialogue(onDialogueLineFinished);
+        }
     }
 
-    private IEnumerator WriteText(string text)
+    private IEnumerator WriteText(string text, bool skip)
     {
+        while (isTyping)
+        {
+            yield return new WaitForEndOfFrame();
+        }
         isTyping = true;
         finalText = m_result.text + text;
         m_command.text = "";
         bool awaitingClosing = false;
-
+        if (skip)
+        {
+            SkipText();
+            yield return null;
+        }
         foreach (char letter in text)
         {
             // Avoid animating markup tags
@@ -360,8 +506,7 @@ public class GameController : DialogueViewBase
         }
 
         isTyping = false;
-        if (lastLine)
-            FinishDialogue(onDialogueLineFinished);
+        FinishDialogue(onDialogueLineFinished);
     }
 
     /* ===============================
@@ -393,15 +538,7 @@ public class GameController : DialogueViewBase
         return string.Join(" ", words);
     }
 
-    public static (string, string) SplitLastWord(string input)
-    {
-        if (string.IsNullOrWhiteSpace(input)) return (input, "");
-
-        var parts = input.Trim().Split(' ');
-        return parts.Length == 1
-            ? (parts[0], "")
-            : (string.Join(" ", parts[..^1]), parts[^1]);
-    }
+ 
 
     public string CorrectSentence(string sentence)
     {
@@ -421,7 +558,7 @@ public class GameController : DialogueViewBase
 
     public string HighlightWords(string[] options, string s)
     {
-        string colorTag = $"<color=#{ColorUtility.ToHtmlStringRGB(m_interactableColor)}>";
+        string colorTag = $"<color=#{ColorUtility.ToHtmlStringRGB(tagColorMap["interactable"])}>";
         string closeTag = "</color>";
 
         foreach (string option in options)

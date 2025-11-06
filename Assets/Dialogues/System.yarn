@@ -1,14 +1,17 @@
 ﻿title: Start
 ---
 <<set $inputVariable = "">>
-[character name=""][/character]>> SYSTEM BOOTING...<br>>>> MEMORY CHECK:198 KB FREE<br>>>> ENTER USERNAME:#textinput
+
+ >>> SYSTEM BOOTING...#nochevron
+ >>> MEMORY CHECK:198 KB FREE #nocharacter #nochevron
+ >>> ENTER USERNAME:#textinput #nochevron #nocharacter
 
 ->waitinginput
 <<set $playerName = $inputVariable>>
 Hello, {$playerName}
 
 >>> Connecting to R-Unit...
-|||||||||||||||||||||||||||
+|||||||||||||||||||||||||||#unskippable #nochevron
 SUCCESS! Connected to unit RD-T5
 RD-T5: Hello! I am RD-T5, your trusty Evidence Collection & Analysis Android
 RD-T5: Would you like to undergo a short guide on using the system? Y/N
@@ -22,18 +25,25 @@ RD-T5: Would you like to undergo a short guide on using the system? Y/N
 ===
 title: Tutorial
 ---
-RD-T5: There is a red door and a blue door. You can ask me to inspect the doors by using the <command>INSPECT</command> command, say something like INSPECT Red Door.
-<info>Command <command>INSPECT</command> now unlocked</info>
-->inspect drawer
+ 
+->look around
+	RD-T5: There is a red door and a blue door. You can ask me to inspect the doors by using the <command>INSPECT</command> command, say something like INSPECT Red Door.
+	<info>Command <command>INSPECT</command> now unlocked</info>
+->inspect red door
+	It's a locked red door
 	<<jump Tutorial>>
-->inspect window
+->inspect blue door
 	<<jump Office>>
 ===
 title: Office
 ---
-You are in an office in 1987, there is a drawer, and a window.
+
+->look around
+	RD-T5: I see a drawer and a window.
 ->inspect drawer
-	<<jump Drawer_1987>>
+	RD-T5: There is a key.
+	<<jump Office>>
 ->inspect window
-	<<jump Window>>
+	RD-T5: It's raining
+	<<jump Office>>
 ===
