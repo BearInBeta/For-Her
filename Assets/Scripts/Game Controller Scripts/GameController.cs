@@ -44,6 +44,10 @@ public class GameController : DialogueViewBase
     [Header("Defined Values")]
     [SerializeField] private string[] fluff = { "the", "and", "is", "in", "at", "of", "a", "to" };
     [SerializeField] private string systemName;
+
+    [Header("Cursors")]
+    [SerializeField] private Texture2D defaultCursor;
+    [SerializeField] private Texture2D clickableCursor;
     /* ===============================
      * 🧠 Private Variables
      * =============================== */
@@ -55,7 +59,6 @@ public class GameController : DialogueViewBase
 
     private bool isTyping;
     private bool awaitingOptions;
-    private bool textInput;
     private bool unskippable;
 
     private List<string>[] commands;
@@ -63,12 +66,16 @@ public class GameController : DialogueViewBase
     private SpellChecker spellChecker, specialChecker;
     private Stack<string> rooms;
     private Dictionary<string, Color> tagColorMap;
-
+    private bool cursorOverLink;
+    private Vector2 mouseDownPos;
+    private float dragThreshold = 10f;
     /* ===============================
      * 🧱 Unity Lifecycle Methods
      * =============================== */
     private void Awake()
     {
+        Cursor.SetCursor(defaultCursor, Vector2.zero, CursorMode.Auto);
+
 
         // Convert list to dictionary for quick lookup
         tagColorMap = new Dictionary<string, Color>();
@@ -96,7 +103,24 @@ public class GameController : DialogueViewBase
 
     private void Update()
     {
-     
+
+        // Always do hover logic
+        CheckLinkHover();
+
+        // Record mouse down
+        if (Input.GetMouseButtonDown(0))
+            mouseDownPos = Input.mousePosition;
+
+        // On release: check movement distance
+        if (Input.GetMouseButtonUp(0))
+        {
+            if (Vector2.Distance(mouseDownPos, Input.mousePosition) < dragThreshold)
+            {
+                // A "real" click → process link
+                CheckLinkClick();
+            }
+        }
+
         m_locationText.text = $"LOCATION: {(rooms?.Count != 0 ? rooms.Peek() : "Connecting...")}";
         // Allow Enter key to submit commands
         if (Input.GetKeyDown(KeyCode.Return))
@@ -163,14 +187,9 @@ public class GameController : DialogueViewBase
 
         this.onDialogueLineFinished = (Action)onDialogueLineFinished.Clone();
 
-        // Metadata handling (e.g., "lastline" or "textinput")
-        //lastLine = dialogueLine.Metadata?.Contains("lastline");
-        textInput = dialogueLine.Metadata?.Contains("textinput") == true;
         unskippable = dialogueLine.Metadata?.Contains("unskippable") == true;
         Typewriter(textToType, false, unskippable);
 
-        if (textInput)
-            CommandSelect();
     }
 
     public override void RunOptions(DialogueOption[] dialogueOptions, Action<int> onOptionSelected)
@@ -194,7 +213,7 @@ public class GameController : DialogueViewBase
     public override void DialogueComplete()
     {
         // If we are not waiting for input or options, restart the room
-        if (!awaitingOptions && !textInput)
+        if (!awaitingOptions)
         {
             StartCoroutine(RestartRoomNextFrame());
         }
@@ -244,6 +263,7 @@ public class GameController : DialogueViewBase
         if (string.IsNullOrEmpty(input))
             return input;
 
+        input = WrapInteractables(input);
         foreach (var kvp in tagColorMap)
         {
             string tag = kvp.Key;
@@ -274,6 +294,22 @@ public class GameController : DialogueViewBase
         return input;
     }
 
+    private string WrapInteractables(string input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return input;
+
+        // Don't wrap if already inside <interactable>
+        string pattern = @"(?<!<interactable>)(<link=([^>]+)>.*?<\/link>)(?!<\/interactable>)";
+
+        return Regex.Replace(
+            input,
+            pattern,
+            "<interactable>$1</interactable>",
+            RegexOptions.Singleline | RegexOptions.IgnoreCase
+        );
+    }
+
     /* ===============================
      * 💻 Command Input Handling
      * =============================== */
@@ -296,33 +332,10 @@ public class GameController : DialogueViewBase
         }
         else
         {
-            CommandSelect();
+            if(!isTyping)
+                CommandSelect();
             return;
         }
-
-        // Handle special "text input" case
-        if (textInput)
-        {
-            if (commandText.Length > 10 || commandText.Length < 1 || Regex.IsMatch(commandText, @"[\d\W]"))
-            {
-                Typewriter($"<error>INVALID INPUT: {commandText}</error>");
-                return;
-            }
-
-            m_runner.VariableStorage.SetValue("$inputVariable", commandText);
-            int commandResult = GetOptionID("waitinginput");
-
-            if (commandResult != -1)
-            {
-                onOptionSelected?.Invoke(commandResult);
-                ResetCommandState();
-                return;
-            }
-
-            FinishDialogue(onDialogueLineFinished);
-            return;
-        }
-
         // Handle selectable dialogue options
         if (dialogueOptions != null && dialogueOptions.Length > 0)
         {
@@ -339,6 +352,23 @@ public class GameController : DialogueViewBase
         string ogcommand = commandText.ToLower();
         string command = ogcommand;
 
+        // Handle special "text input" case
+        if (GetOptionID("waitinginput") != -1)
+        {
+            if (commandText.Length > 50 || commandText.Length < 1 || Regex.IsMatch(commandText, @"[\d\W]"))
+            {
+                Typewriter($"<error>INVALID INPUT: {commandText}</error>");
+                return;
+            }
+
+            m_runner.VariableStorage.SetValue("$inputVariable", commandText);
+            int commandResult = GetOptionID("waitinginput");
+
+            onOptionSelected?.Invoke(commandResult);
+            ResetCommandState();
+            FinishDialogue(onDialogueLineFinished);
+            return;
+        }
 
         // Restart current node
         if (command == "location")
@@ -367,7 +397,7 @@ public class GameController : DialogueViewBase
 
         string[] splitWords = command.Trim().Split(' ');
 
-        if(splitWords.Length > 5)
+        if(splitWords.Length > 8)
         {
             Typewriter($"<error>'{command}' is not a valid option</error>");
             return;
@@ -512,6 +542,77 @@ public class GameController : DialogueViewBase
     /* ===============================
      * 🧮 Helper Methods
      * =============================== */
+    private void CheckLinkHover()
+    {
+        m_result.ForceMeshUpdate();
+        Camera cam = GetCanvasCamera();
+
+        int linkIndex = TMP_TextUtilities.FindIntersectingLink(
+            m_result,
+            Input.mousePosition,
+            cam
+        );
+
+        if (linkIndex != -1)
+        {
+            if (!cursorOverLink)
+            {
+                cursorOverLink = true;
+                Cursor.SetCursor(clickableCursor, Vector2.zero, CursorMode.Auto);
+            }
+        }
+        else
+        {
+            if (cursorOverLink)
+            {
+                cursorOverLink = false;
+                Cursor.SetCursor(defaultCursor, Vector2.zero, CursorMode.Auto);
+            }
+        }
+    }
+
+    private void CheckLinkClick()
+    {
+        m_result.ForceMeshUpdate();
+        Camera cam = GetCanvasCamera();
+
+        int linkIndex = TMP_TextUtilities.FindIntersectingLink(
+            m_result,
+            Input.mousePosition,
+            cam
+        );
+
+        if (linkIndex == -1)
+            return;
+
+        TMP_LinkInfo linkInfo = m_result.textInfo.linkInfo[linkIndex];
+        string linkId = linkInfo.GetLinkID().Trim();
+
+        Sprite sprite = Resources.Load<Sprite>($"Images/{linkId}");
+
+        if (sprite != null)
+            OpenImagePopup(sprite);
+        else
+        {
+            Debug.LogError($"Sprite '{linkId}' not found in Resources/Images/");
+            OpenImagePopup(null);
+        }
+    }
+
+
+
+    private void OpenImagePopup(Sprite sprite)
+    {
+        if (sprite == null)
+        {
+            Debug.LogError("[IMAGE POPUP] Cannot open image popup — sprite was null.");
+            return;
+        }
+
+        Debug.Log($"[IMAGE POPUP] Opening popup for sprite: {sprite.name}");
+
+        // TODO: Show popup UI, assign sprite to Image component, etc.
+    }
 
     private int GetOptionID(string command)
     {
@@ -551,6 +652,16 @@ public class GameController : DialogueViewBase
     {
         return listOfLists.SelectMany(list => list).ToArray();
     }
+    private Camera GetCanvasCamera()
+    {
+        Canvas canvas = m_result.canvas;
+
+        if (canvas.renderMode == RenderMode.ScreenSpaceOverlay)
+            return null;
+
+        return canvas.worldCamera != null ? canvas.worldCamera : Camera.main;
+    }
+
 
     /* ===============================
      * 💤 Unused or Debug Helpers

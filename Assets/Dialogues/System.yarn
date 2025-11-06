@@ -4,14 +4,14 @@
 
  >>> SYSTEM BOOTING...#nochevron
  >>> MEMORY CHECK:198 KB FREE #nocharacter #nochevron
- >>> ENTER USERNAME:#textinput #nochevron #nocharacter
+ >>> ENTER USERNAME for <link=osama hasan>osama_hasan.png</link>: #nochevron #nocharacter
 
 ->waitinginput
 <<set $playerName = $inputVariable>>
 Hello, {$playerName}
 
 >>> Connecting to R-Unit...
-|||||||||||||||||||||||||||#unskippable #nochevron
+████████████████████████████████████████#unskippable #nochevron
 SUCCESS! Connected to unit RD-T5
 RD-T5: Hello! I am RD-T5, your trusty Evidence Collection & Analysis Android
 RD-T5: Would you like to undergo a short guide on using the system? Y/N
@@ -33,17 +33,5 @@ title: Tutorial
 	It's a locked red door
 	<<jump Tutorial>>
 ->inspect blue door
-	<<jump Office>>
-===
-title: Office
----
-
-->look around
-	RD-T5: I see a drawer and a window.
-->inspect drawer
-	RD-T5: There is a key.
-	<<jump Office>>
-->inspect window
-	RD-T5: It's raining
 	<<jump Office>>
 ===
