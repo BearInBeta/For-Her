@@ -32,7 +32,8 @@ public class GameController : DialogueViewBase
     [SerializeField] private ScrollRect m_scrollRect;
     [SerializeField] private TMP_Text m_result;
     [SerializeField] private TMP_Text m_locationText;
-
+    [SerializeField] private Image m_image;
+    [SerializeField] private WindowController m_ImageWindowController;
     [Header("Dialogue")]
     [SerializeField] private DialogueRunner m_runner;
     [SerializeField] private MarkupPalette m_palette;
@@ -609,9 +610,8 @@ public class GameController : DialogueViewBase
             return;
         }
 
-        Debug.Log($"[IMAGE POPUP] Opening popup for sprite: {sprite.name}");
-
-        // TODO: Show popup UI, assign sprite to Image component, etc.
+        m_image.sprite = sprite;
+        m_ImageWindowController.Maximize();
     }
 
     private int GetOptionID(string command)
