@@ -10,6 +10,7 @@ using Yarn.Unity;
 using Yarn;
 using static Unity.Burst.Intrinsics.X86.Avx;
 using System.Xml.Linq;
+using UnityEngine.EventSystems;
 
 public class GameController : DialogueViewBase
 {
@@ -34,6 +35,8 @@ public class GameController : DialogueViewBase
     [SerializeField] private TMP_Text m_locationText;
     [SerializeField] private Image m_image;
     [SerializeField] private WindowController m_ImageWindowController;
+    [SerializeField] private RectTransform targetWindowRoot;
+
     [Header("Dialogue")]
     [SerializeField] private DialogueRunner m_runner;
     [SerializeField] private MarkupPalette m_palette;
@@ -105,21 +108,19 @@ public class GameController : DialogueViewBase
     private void Update()
     {
 
-        // Always do hover logic
-        CheckLinkHover();
+        // Hover only when topmost
+        if (IsTopmostUnderPointer())
+            CheckLinkHover();
 
-        // Record mouse down
-        if (Input.GetMouseButtonDown(0))
+        // Mouse down only when topmost
+        if (Input.GetMouseButtonDown(0) && IsTopmostUnderPointer())
             mouseDownPos = Input.mousePosition;
 
-        // On release: check movement distance
-        if (Input.GetMouseButtonUp(0))
+        // Mouse up only when topmost
+        if (Input.GetMouseButtonUp(0) && IsTopmostUnderPointer())
         {
             if (Vector2.Distance(mouseDownPos, Input.mousePosition) < dragThreshold)
-            {
-                // A "real" click → process link
                 CheckLinkClick();
-            }
         }
 
         m_locationText.text = $"LOCATION: {(rooms?.Count != 0 ? rooms.Peek() : "Connecting...")}";
@@ -543,6 +544,29 @@ public class GameController : DialogueViewBase
     /* ===============================
      * 🧮 Helper Methods
      * =============================== */
+
+    private bool IsTopmostUnderPointer()
+    {
+        if (targetWindowRoot == null)
+            return false;
+
+        PointerEventData pointer = new PointerEventData(EventSystem.current);
+        pointer.position = Input.mousePosition;
+
+        List<RaycastResult> results = new List<RaycastResult>();
+        EventSystem.current.RaycastAll(pointer, results);
+
+        if (results.Count == 0)
+            return false;
+
+        // The UI element the pointer hits FIRST (front-most)
+        GameObject topHit = results[0].gameObject;
+
+        // Check if the top-most hit belongs to THIS window
+        return topHit.transform.IsChildOf(targetWindowRoot);
+    }
+
+
     private void CheckLinkHover()
     {
         m_result.ForceMeshUpdate();

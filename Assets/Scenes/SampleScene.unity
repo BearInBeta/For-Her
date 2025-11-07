@@ -142,7 +142,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &64843447
 RectTransform:
   m_ObjectHideFlags: 0
@@ -3834,6 +3834,7 @@ MonoBehaviour:
   m_locationText: {fileID: 1656184733}
   m_image: {fileID: 1097962508}
   m_ImageWindowController: {fileID: 64843449}
+  targetWindowRoot: {fileID: 1871828603}
   m_runner: {fileID: 1821302734}
   m_palette: {fileID: 11400000, guid: 4256034f0a807514cbbcd4c74bd4b87f, type: 2}
   typewriterWait: 0.05
