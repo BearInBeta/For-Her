@@ -29,6 +29,12 @@ public class WindowController : MonoBehaviour
             // Window should start fully closed
             animator.Play("Idle", 0, 1f);
         }
+        
+    }
+    private void Start()
+    {
+
+        
     }
 
 
@@ -45,6 +51,7 @@ public class WindowController : MonoBehaviour
         animator.SetTrigger(minimizeTrigger);
 
         StartCoroutine(DisableAfterAnimation());
+
     }
 
     public void Maximize()
