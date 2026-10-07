@@ -5,12 +5,10 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using TMPro;
 using UnityEngine;
-using UnityEngine.UI;
-using Yarn.Unity;
-using Yarn;
-using static Unity.Burst.Intrinsics.X86.Avx;
-using System.Xml.Linq;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
+using Yarn;
+using Yarn.Unity;
 
 public class GameController : DialogueViewBase
 {
@@ -20,14 +18,23 @@ public class GameController : DialogueViewBase
         public string tag;
         public Color color;
     }
+    [Serializable]
+    public class MusicTrack{
+        public string name;
+        public AudioClip audioClip;
+    }
 
     /* ===============================
-     * 🧩 Serialized Fields (Editor Setup)
+     * Serialized Fields
      * =============================== */
-    [Header("Audio")]
-    [SerializeField] private AudioSource m_typingSFX, m_gameSFX;
-    [SerializeField] private AudioClip typingSFXClip, typingSkipClip;
 
+    [Header("Audio")]
+    [SerializeField] private AudioSource m_typingSFX;
+    [SerializeField] private AudioSource m_gameSFX;
+    [SerializeField] private AudioSource m_gameMusic;
+    [SerializeField] private AudioClip typingSFXClip;
+    [SerializeField] private AudioClip typingSkipClip;
+    [SerializeField] private MusicTrack[] musicTracks;
     [Header("UI References")]
     [SerializeField] private TMP_InputField m_command;
     [SerializeField] private ScrollRect m_scrollRect;
@@ -37,512 +44,1454 @@ public class GameController : DialogueViewBase
     [SerializeField] private WindowController m_ImageWindowController;
     [SerializeField] private RectTransform targetWindowRoot;
 
+
+    [Header("Music Notification")]
+    [SerializeField] private GameObject notificationUI;
+    [SerializeField] private TMP_Text notificationText;
+    [SerializeField] private float notificationTime = 0.8f;
+
+    [SerializeField] private CanvasGroup notificationCanvasGroup;
+    [SerializeField] private RectTransform notificationRect;
+
+    [SerializeField] private float notificationAnimTime = 0.25f;
+    [SerializeField] private float notificationSlideDistance = 100f;
+
+    private Coroutine notificationCoroutine;
+
     [Header("Dialogue")]
     [SerializeField] private DialogueRunner m_runner;
     [SerializeField] private MarkupPalette m_palette;
     [SerializeField] private float typewriterWait = 0.02f;
+    [SerializeField] private float typewriterLineWait = 0.2f;
 
     [Header("Colors")]
     [SerializeField] private List<TagColor> tagColorList = new List<TagColor>();
 
     [Header("Defined Values")]
-    [SerializeField] private string[] fluff = { "the", "and", "is", "in", "at", "of", "a", "to" };
+    [SerializeField]
+    private string[] fluff =
+    {
+        "the",
+        "and",
+        "is",
+        "in",
+        "at",
+        "of",
+        "a",
+        "to"
+    };
+
     [SerializeField] private string systemName;
 
     [Header("Cursors")]
     [SerializeField] private Texture2D defaultCursor;
     [SerializeField] private Texture2D clickableCursor;
+
     /* ===============================
-     * 🧠 Private Variables
+     * Typewriter Job
      * =============================== */
-    private IEnumerator typewriter;
-    private string textToType, finalText;
+
+    private class TypewriterJob
+    {
+        public string Text;
+        public bool Skip;
+        public bool Unskippable;
+        public Action OnComplete;
+    }
+
+    private readonly Queue<TypewriterJob> typewriterQueue =
+        new Queue<TypewriterJob>();
+
+    private TypewriterJob activeTypewriterJob;
+
+    private bool typewriterQueueRunning;
+    private bool skipRequested;
+    private bool isTyping;
+
+    /* ===============================
+     * Dialogue State
+     * =============================== */
+
     private DialogueOption[] dialogueOptions;
     private Action<int> onOptionSelected;
-    private Action onDialogueLineFinished;
 
-    private bool isTyping;
     private bool awaitingOptions;
-    private bool unskippable;
+
+    /* ===============================
+     * Command State
+     * =============================== */
 
     private List<string>[] commands;
     private List<string> words;
-    private SpellChecker spellChecker, specialChecker;
+
+    private SpellChecker spellChecker;
+    private SpellChecker specialChecker;
+
     private Stack<string> rooms;
+
     private Dictionary<string, Color> tagColorMap;
-    private bool cursorOverLink;
-    private Vector2 mouseDownPos;
-    private float dragThreshold = 10f;
+
     /* ===============================
-     * 🧱 Unity Lifecycle Methods
+     * Link / Cursor State
      * =============================== */
+
+    private bool cursorOverLink;
+
+    private Vector2 mouseDownPos;
+
+    private const float dragThreshold = 10f;
+
+    /* ===============================
+     * Unity Lifecycle
+     * =============================== */
+
     private void Awake()
     {
-        Cursor.SetCursor(defaultCursor, Vector2.zero, CursorMode.Auto);
+        Cursor.SetCursor(
+            defaultCursor,
+            Vector2.zero,
+            CursorMode.Auto
+        );
 
-
-        // Convert list to dictionary for quick lookup
         tagColorMap = new Dictionary<string, Color>();
-        foreach (var entry in tagColorList)
+
+        foreach (TagColor entry in tagColorList)
         {
-            if (!string.IsNullOrEmpty(entry.tag) && !tagColorMap.ContainsKey(entry.tag))
-                tagColorMap.Add(entry.tag, entry.color);
+            if (string.IsNullOrEmpty(entry.tag))
+                continue;
+
+            if (tagColorMap.ContainsKey(entry.tag))
+                continue;
+
+            tagColorMap.Add(entry.tag, entry.color);
         }
 
-
         rooms = new Stack<string>();
-        textToType = "";
+
         CommandDeselect();
     }
 
     private void Start()
     {
-        // Load data for command and word recognition
         words = CSVReader.LoadCSVOneColumn("words.csv");
         commands = CSVReader.LoadCSV("data.csv");
 
         spellChecker = new SpellChecker(words);
-        specialChecker = new SpellChecker(FlattenListArray(commands));
+
+        specialChecker = new SpellChecker(
+            FlattenListArray(commands)
+        );
+
+        StartCoroutine(PlayTrack("smoke and wood"));
     }
 
     private void Update()
     {
+        bool isTopmost = IsTopmostUnderPointer();
 
-        // Hover only when topmost
-        if (IsTopmostUnderPointer())
-            CheckLinkHover();
-
-        // Mouse down only when topmost
-        if (Input.GetMouseButtonDown(0) && IsTopmostUnderPointer())
-            mouseDownPos = Input.mousePosition;
-
-        // Mouse up only when topmost
-        if (Input.GetMouseButtonUp(0) && IsTopmostUnderPointer())
+        /*
+         * Link hover handling.
+         */
+        if (isTopmost)
         {
-            if (Vector2.Distance(mouseDownPos, Input.mousePosition) < dragThreshold)
-                CheckLinkClick();
+            CheckLinkHover();
+        }
+        else if (cursorOverLink)
+        {
+            cursorOverLink = false;
+
+            Cursor.SetCursor(
+                defaultCursor,
+                Vector2.zero,
+                CursorMode.Auto
+            );
         }
 
-        m_locationText.text = $"LOCATION: {(rooms?.Count != 0 ? rooms.Peek() : "Connecting...")}";
-        // Allow Enter key to submit commands
+        /*
+         * Mouse click handling.
+         */
+        if (Input.GetMouseButtonDown(0) && isTopmost)
+        {
+            mouseDownPos = Input.mousePosition;
+        }
+
+        if (Input.GetMouseButtonUp(0) && isTopmost)
+        {
+            float distance = Vector2.Distance(
+                mouseDownPos,
+                Input.mousePosition
+            );
+
+            if (distance < dragThreshold)
+            {
+                CheckLinkClick();
+            }
+        }
+
+        /*
+         * Location display.
+         */
+        if (m_locationText != null)
+        {
+            string location =
+                rooms != null && rooms.Count > 0
+                    ? rooms.Peek()
+                    : "Not Connected";
+
+            m_locationText.text =
+                $"LOCATION: {location}";
+        }
+
+        /*
+         * Enter submits command.
+         */
         if (Input.GetKeyDown(KeyCode.Return))
         {
             SubmitCommand();
         }
     }
 
-    /* ===============================
-     * 🎭 Yarn Commands
-     * =============================== */
-    [YarnCommand("playsfx")]
-    public void PlaySFX(string sfxName)
+    private void OnDisable()
     {
-        // Load and play SFX by name from Resources/SFX/
-        AudioClip clip = Resources.Load<AudioClip>($"SFX/{sfxName}");
-        if (clip != null)
-            m_gameSFX.PlayOneShot(clip);
-        else
-            Debug.LogWarning($"SFX '{sfxName}' not found in Resources/SFX/");
+        if (cursorOverLink)
+        {
+            cursorOverLink = false;
+
+            Cursor.SetCursor(
+                defaultCursor,
+                Vector2.zero,
+                CursorMode.Auto
+            );
+        }
     }
 
     /* ===============================
-     * 💬 DialogueViewBase Overrides
+     * Yarn Commands
+     * =============================== */
+
+    [YarnCommand("playsfx")]
+    public void PlaySFX(string sfxName)
+    {
+        AudioClip clip =
+            Resources.Load<AudioClip>($"SFX/{sfxName}");
+
+        if (clip != null)
+        {
+            if (m_gameSFX != null)
+            {
+                m_gameSFX.PlayOneShot(clip);
+            }
+        }
+        else
+        {
+            Debug.LogWarning(
+                $"SFX '{sfxName}' not found in Resources/SFX/"
+            );
+        }
+    }
+
+    /* ===============================
+     * Room Tracking
      * =============================== */
 
     private void CheckRoom()
     {
-        if (m_runner.CurrentNodeName.ToLower() != "start")
-        {
-            string currentRoom = m_runner.CurrentNodeName;
+        if (m_runner == null)
+            return;
 
-            if (!rooms.Contains(currentRoom))
-            {
-                rooms.Push(currentRoom);
-                Typewriter($"<system>{systemName}: CURRENT LOCATION: {currentRoom}</system>");
-            }
+        string currentRoom =
+            m_runner.CurrentNodeName;
+
+        if (string.IsNullOrEmpty(currentRoom))
+            return;
+
+        /*
+         * Don't count Start as a room.
+         */
+        if (string.Equals(
+                currentRoom,
+                "start",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
         }
+
+        if (rooms.Contains(currentRoom))
+            return;
+
+        rooms.Push(currentRoom);
+
+        string[] splitWords =
+            currentRoom
+                .Trim()
+                .Split(
+                    new[] { '_' },
+                    StringSplitOptions.RemoveEmptyEntries
+                );
+        
+        string toType = "";
+        string roomName = "";
+        
+        for(int i = 1; i < splitWords.Length; i++){
+            roomName += splitWords[i] + " ";
+        }
+
+        if(roomName == ""){
+            roomName = currentRoom;
+        }else{
+            roomName = roomName.Trim();
+        }
+        switch(splitWords[0]){
+            case "location": toType = $"<system>{systemName}: CURRENT LOCATION: {roomName}</system>"; break;
+            case "person": toType = $"<system>{systemName}: SPEAKING TO: {roomName}</system>"; break;
+            case "object": toType = $"<system>{systemName}: INSPECTING: {roomName}</system>"; break;
+
+            default: toType = $"<system>{systemName}: {roomName}</system>"; break;
+        }
+
+        Typewriter(
+            toType
+        );
     }
-    public override void RunLine(LocalizedLine dialogueLine, Action onDialogueLineFinished)
+
+    /* ===============================
+     * DialogueViewBase Overrides
+     * =============================== */
+
+    public override void RunLine(
+        LocalizedLine dialogueLine,
+        Action onDialogueLineFinished)
     {
-        // Track visited rooms based on Yarn node name
         CheckRoom();
 
-        // Parse and color Yarn text using palette
-        string charName = dialogueLine.CharacterName;
-        Yarn.Markup.MarkupParseResult text = dialogueLine.Text;
-        string output;
-        bool nocharacter = dialogueLine.Metadata?.Contains("nocharacter") == true;
-        bool nochevron = dialogueLine.Metadata?.Contains("nochevron") == true;
-        if (charName != null && charName != "" && !nocharacter)
-        {
-            if(charName == systemName)
-               output = $"<system>{(!nochevron ? "> " : "")}{PaletteMarkedUpText(text, m_palette, true)}</system>";
-            else
-                output = $"<dialogue>{(!nochevron ? "> " : "")}{PaletteMarkedUpText(text, m_palette, true)}</dialogue>";
+        string charName =
+            dialogueLine.CharacterName;
 
+        Yarn.Markup.MarkupParseResult text =
+            dialogueLine.Text;
+
+        bool nocharacter =
+            dialogueLine.Metadata?.Contains("nocharacter") == true;
+
+        bool nochevron =
+            dialogueLine.Metadata?.Contains("nochevron") == true;
+
+        bool unskippable =
+            dialogueLine.Metadata?.Contains("unskippable") == true;
+
+        string output;
+
+        if (!string.IsNullOrEmpty(charName) &&
+            !nocharacter)
+        {
+            if (charName == systemName)
+            {
+                output =
+                    $"<system>" +
+                    $"{(!nochevron ? "> " : "")}" +
+                    $"{PaletteMarkedUpText(text, m_palette, true)}" +
+                    $"</system>";
+            }
+            else
+            {
+                output =
+                    $"<dialogue>" +
+                    $"{(!nochevron ? "> " : "")}" +
+                    $"{PaletteMarkedUpText(text, m_palette, true)}" +
+                    $"</dialogue>";
+            }
         }
         else
         {
-            output = $"<info>{(!nochevron ? "> " : "")}{PaletteMarkedUpText(text, m_palette, true)}</info>";
+            output =
+                $"<info>" +
+                $"{(!nochevron ? "> " : "")}" +
+                $"{PaletteMarkedUpText(text, m_palette, true)}" +
+                $"</info>";
         }
-        textToType = output;
 
-        this.onDialogueLineFinished = (Action)onDialogueLineFinished.Clone();
-
-        unskippable = dialogueLine.Metadata?.Contains("unskippable") == true;
-        Typewriter(textToType, false, unskippable);
-
+        /*
+         * IMPORTANT:
+         *
+         * This Yarn callback belongs specifically to this
+         * typewriter job.
+         */
+        Typewriter(
+            output,
+            false,
+            unskippable,
+            onDialogueLineFinished
+        );
     }
 
-    public override void RunOptions(DialogueOption[] dialogueOptions, Action<int> onOptionSelected)
+    public override void RunOptions(
+        DialogueOption[] dialogueOptions,
+        Action<int> onOptionSelected)
     {
-        // Track visited rooms based on Yarn node name
-       
         awaitingOptions = true;
-        this.dialogueOptions = dialogueOptions;
-        this.onOptionSelected = onOptionSelected;
+
+        this.dialogueOptions =
+            dialogueOptions;
+
+        this.onOptionSelected =
+            onOptionSelected;
 
         CheckRoom();
 
         CommandSelect();
     }
 
-    private void FinishDialogue(Action action)
-    {
-        if (!awaitingOptions)
-            action?.Invoke();
-    }
     public override void DialogueComplete()
     {
-        // If we are not waiting for input or options, restart the room
+        /*
+         * Preserve your existing room behavior.
+         */
         if (!awaitingOptions)
         {
-            StartCoroutine(RestartRoomNextFrame());
+            StartCoroutine(
+                RestartRoomNextFrame()
+            );
         }
     }
+
     /* ===============================
-     * 🧾 Text & Markup Handling
+     * Yarn / TMP Markup
      * =============================== */
-    public string PaletteMarkedUpText(Yarn.Markup.MarkupParseResult line, MarkupPalette palette, bool applyLineBreaks = true)
+
+    public string PaletteMarkedUpText(
+        Yarn.Markup.MarkupParseResult line,
+        MarkupPalette palette,
+        bool applyLineBreaks = true)
     {
-        string lineOfText = line.Text;
-        line.Attributes.Sort((a, b) => b.Position.CompareTo(a.Position));
+        string lineOfText =
+            line.Text;
+
+        /*
+         * Process markup backwards because inserting TMP tags
+         * changes string positions.
+         */
+        line.Attributes.Sort(
+            (a, b) =>
+                b.Position.CompareTo(a.Position)
+        );
 
         foreach (var attribute in line.Attributes)
         {
             Color markerColour;
 
-            // Handle text styles
             if (attribute.Name == "i")
             {
-                lineOfText = lineOfText.Insert(attribute.Position + attribute.Length, "</i>")
-                                         .Insert(attribute.Position, "<i>");
+                lineOfText =
+                    lineOfText
+                        .Insert(
+                            attribute.Position + attribute.Length,
+                            "</i>"
+                        )
+                        .Insert(
+                            attribute.Position,
+                            "<i>"
+                        );
             }
             else if (attribute.Name == "b")
             {
-                lineOfText = lineOfText.Insert(attribute.Position + attribute.Length, "</b>")
-                                         .Insert(attribute.Position, "<b>");
+                lineOfText =
+                    lineOfText
+                        .Insert(
+                            attribute.Position + attribute.Length,
+                            "</b>"
+                        )
+                        .Insert(
+                            attribute.Position,
+                            "<b>"
+                        );
             }
-            // Handle colored text via palette
-            else if (palette.ColorForMarker(attribute.Name, out markerColour))
+            else if (
+                palette != null &&
+                palette.ColorForMarker(
+                    attribute.Name,
+                    out markerColour
+                ))
             {
-                lineOfText = lineOfText.Insert(attribute.Position + attribute.Length, "</color>")
-                                         .Insert(attribute.Position, $"<color=#{ColorUtility.ToHtmlStringRGB(markerColour)}>");
+                string htmlColor =
+                    ColorUtility.ToHtmlStringRGB(
+                        markerColour
+                    );
+
+                lineOfText =
+                    lineOfText
+                        .Insert(
+                            attribute.Position + attribute.Length,
+                            "</color>"
+                        )
+                        .Insert(
+                            attribute.Position,
+                            $"<color=#{htmlColor}>"
+                        );
             }
-            // Handle manual line breaks
-            else if (applyLineBreaks && attribute.Name == "br")
+            else if (
+                applyLineBreaks &&
+                attribute.Name == "br")
             {
-                lineOfText = lineOfText.Insert(attribute.Position, "<br>");
+                lineOfText =
+                    lineOfText.Insert(
+                        attribute.Position,
+                        "<br>"
+                    );
             }
         }
 
         return lineOfText;
     }
 
-    /// Replaces special tags (like <interactable>...</interactable>) with rich text color tags.
-    public string ReplaceTagsWithColors(string input)
+    public string ReplaceTagsWithColors(
+        string input)
     {
         if (string.IsNullOrEmpty(input))
             return input;
 
         input = WrapInteractables(input);
-        foreach (var kvp in tagColorMap)
-        {
-            string tag = kvp.Key;
-            string htmlColor = ColorUtility.ToHtmlStringRGB(kvp.Value);
-            string openPattern = $"<{tag}>";
-            string closePattern = $"</{tag}>";
 
-            input = ReplaceNestedTags(input, tag, $"<color=#{htmlColor}>", "</color>");
+        foreach (
+            KeyValuePair<string, Color> kvp
+            in tagColorMap)
+        {
+            string tag =
+                kvp.Key;
+
+            string htmlColor =
+                ColorUtility.ToHtmlStringRGB(
+                    kvp.Value
+                );
+
+            input = ReplaceNestedTags(
+                input,
+                tag,
+                $"<color=#{htmlColor}>",
+                "</color>"
+            );
         }
 
         return input;
     }
 
-    /// Recursively replaces nested occurrences of a tag with a replacement.
-    private string ReplaceNestedTags(string input, string tag, string openReplacement, string closeReplacement)
+    private string ReplaceNestedTags(
+        string input,
+        string tag,
+        string openReplacement,
+        string closeReplacement)
     {
-        string pattern = $@"<{tag}>(.*?)</{tag}>";
-        while (Regex.IsMatch(input, pattern, RegexOptions.Singleline))
+        string escapedTag =
+            Regex.Escape(tag);
+
+        string pattern =
+            $@"<{escapedTag}>(.*?)</{escapedTag}>";
+
+        while (
+            Regex.IsMatch(
+                input,
+                pattern,
+                RegexOptions.Singleline
+            ))
         {
-            input = Regex.Replace(input, pattern, match =>
-            {
-                string innerContent = match.Groups[1].Value;
-                // Recurse for inner tags of the same type
-                innerContent = ReplaceNestedTags(innerContent, tag, openReplacement, closeReplacement);
-                return $"{openReplacement}{innerContent}{closeReplacement}";
-            }, RegexOptions.Singleline);
+            input = Regex.Replace(
+                input,
+                pattern,
+                match =>
+                {
+                    string innerContent =
+                        match.Groups[1].Value;
+
+                    innerContent =
+                        ReplaceNestedTags(
+                            innerContent,
+                            tag,
+                            openReplacement,
+                            closeReplacement
+                        );
+
+                    return
+                        $"{openReplacement}" +
+                        $"{innerContent}" +
+                        $"{closeReplacement}";
+                },
+                RegexOptions.Singleline
+            );
         }
+
         return input;
     }
 
-    private string WrapInteractables(string input)
+    private string WrapInteractables(
+        string input)
     {
         if (string.IsNullOrEmpty(input))
             return input;
 
-        // Don't wrap if already inside <interactable>
-        string pattern = @"(?<!<interactable>)(<link=([^>]+)>.*?<\/link>)(?!<\/interactable>)";
+        string pattern =
+            @"(?<!<interactable>)(<link=([^>]+)>.*?<\/link>)(?!<\/interactable>)";
 
         return Regex.Replace(
             input,
             pattern,
             "<interactable>$1</interactable>",
-            RegexOptions.Singleline | RegexOptions.IgnoreCase
+            RegexOptions.Singleline |
+            RegexOptions.IgnoreCase
         );
     }
 
     /* ===============================
-     * 💻 Command Input Handling
+     * Command Input
      * =============================== */
 
     public void SubmitCommand()
     {
-
-        // Skip typing effect if mid-type
+        /*
+         * Enter while text is being typed =
+         * skip current text instead.
+         */
         if (isTyping)
         {
             SkipText();
             return;
         }
-        string commandText = m_command.text.Trim();
-        // Print the player's input in color
-        if (commandText != "")
-        {
-            Typewriter($"<command>>{commandText}</command>", true);
 
-        }
-        else
+        string commandText =
+            m_command.text.Trim();
+
+        if (string.IsNullOrEmpty(commandText))
         {
-            if(!isTyping)
-                CommandSelect();
+            CommandSelect();
             return;
         }
-        // Handle selectable dialogue options
-        if (dialogueOptions != null && dialogueOptions.Length > 0)
+
+        /*
+         * Echo player's command.
+         */
+        Typewriter(
+            $"<command>>{commandText}</command>",
+            true
+        );
+
+        /*
+         * Process Yarn option.
+         */
+        if (
+            dialogueOptions != null &&
+            dialogueOptions.Length > 0)
         {
-            HandleDialogueCommand(commandText);
-        }
-        else
-        {
-            FinishDialogue(onDialogueLineFinished);
+            HandleDialogueCommand(
+                commandText
+            );
         }
     }
 
-    private void HandleDialogueCommand(string commandText)
+    private void HandleDialogueCommand(
+        string commandText)
     {
-        string ogcommand = commandText.ToLower();
-        string command = ogcommand;
+        string originalCommand =
+            commandText.ToLowerInvariant().Trim();
 
-        // Handle special "text input" case
-        if (GetOptionID("waitinginput") != -1)
+        string command =
+            originalCommand;
+
+        /* ===============================
+         * Free Text Input
+         * =============================== */
+
+        int waitingInputOption =
+            GetOptionID("waitinginput");
+
+        if (waitingInputOption != -1)
         {
-            if (commandText.Length > 50 || commandText.Length < 1 || Regex.IsMatch(commandText, @"[\d\W]"))
+            /*
+             * Your original validation allows letters only.
+             *
+             * Spaces, numbers and punctuation are rejected.
+             */
+            if (
+                commandText.Length > 50 ||
+                commandText.Length < 1 ||
+                Regex.IsMatch(
+                    commandText,
+                    @"[\d\W]"
+                ))
             {
-                Typewriter($"<error>INVALID INPUT: {commandText}</error>");
+                Typewriter(
+                    $"<error>INVALID INPUT: {commandText}</error>"
+                );
+
                 return;
             }
 
-            m_runner.VariableStorage.SetValue("$inputVariable", commandText);
-            int commandResult = GetOptionID("waitinginput");
+            /*
+             * Store player's entered value.
+             */
+            m_runner.VariableStorage.SetValue(
+                "$inputVariable",
+                commandText
+            );
 
-            onOptionSelected?.Invoke(commandResult);
-            ResetCommandState();
-            FinishDialogue(onDialogueLineFinished);
+            /*
+             * CRITICAL FIX:
+             *
+             * SelectDialogueOption saves the Yarn callback
+             * BEFORE ResetCommandState() clears it.
+             */
+            SelectDialogueOption(
+                waitingInputOption
+            );
+
             return;
         }
 
-        // Restart current node
+
+        /*
+        * Exact match first.
+        */
+        int exactResult =
+            GetOptionID(command);
+
+        if (exactResult != -1)
+        {
+            SelectDialogueOption(
+                exactResult
+            );
+
+            return;
+        }
+        else
+        {
+            int oneWordResult =
+                CheckOption(
+                    command,
+                    ""
+                );
+
+            if (oneWordResult != -1)
+            {
+                SelectDialogueOption(
+                    oneWordResult
+                );
+
+                return;
+            }
+        }
+        bool blockFreeInput = false;
+        m_runner.VariableStorage.TryGetValue<bool>("$blockFreeInput", out blockFreeInput);
+        if (blockFreeInput)
+        {
+            Typewriter(
+                $"<error>INVALID INPUT: {commandText}</error>"
+            );
+
+            return;
+        }
+        /* ===============================
+         * Location
+         * =============================== */
+
         if (command == "location")
         {
             RestartRoom();
             return;
         }
 
-        // Go back one room
+        /* ===============================
+         * Go Back
+         * =============================== */
+
         if (command == "go back")
         {
-            if (rooms.Count <= 1)
+            if (
+                rooms == null ||
+                rooms.Count <= 1)
             {
-                Typewriter("<error>Nothing to go back to...</error>");
+                Typewriter(
+                    "<error>Nothing to go back to...</error>"
+                );
+
                 return;
             }
 
             rooms.Pop();
-            Typewriter($"<system>{systemName}: CURRENT LOCATION: {rooms.Peek()}");
+
+            Typewriter(
+                $"<system>{systemName}: CURRENT LOCATION: {rooms.Peek()}</system>"
+            );
+
             RestartRoom();
+
             return;
         }
 
-        // Clean and correct command text
-        command = RemoveFluffWords(command);
+        /* ===============================
+         * Normal Commands
+         * =============================== */
 
-        string[] splitWords = command.Trim().Split(' ');
 
-        if(splitWords.Length > 8)
+        string[] fluffSplitWords =
+            command
+                .Trim()
+                .Split(
+                    new[] { ' ' },
+                    StringSplitOptions.RemoveEmptyEntries
+                );
+        command =
+            RemoveFluffWords(command);
+
+        string[] splitWords =
+            command
+                .Trim()
+                .Split(
+                    new[] { ' ' },
+                    StringSplitOptions.RemoveEmptyEntries
+                );
+
+        if (splitWords.Length == 0)
         {
-            Typewriter($"<error>'{command}' is not a valid option</error>");
+            Typewriter(
+                $"<error>Option '{originalCommand}' is not a valid option</error>"
+            );
+
             return;
         }
-        for (int i = 0; i < splitWords.Length; i++)
+
+        if (splitWords.Length > 8)
         {
-            string cmd = "";
-            string subject = "";
-            for(int j = 0; j < i; j++)
-            {
-                cmd += splitWords[j] + " ";
+            Typewriter(
+                $"<error>'{command}' is not a valid option</error>"
+            );
+
+            return;
+        }
+
+        if(splitWords[0] == "play"){
+            string track = "";
+            for(int i = 1; i < fluffSplitWords.Length; i++){
+                track += fluffSplitWords[i] + " ";
             }
-            cmd = cmd.Trim();
+            track = track.Trim();
+            StartCoroutine(PlayTrack(track));
+            return;
+        }
 
-            for (int j = i; j < splitWords.Length; j++)
+       
+
+        /*
+         * Single word command.
+         */
+        if (splitWords.Length == 1)
+        {
+            int oneWordResult =
+                CheckOption(
+                    splitWords[0],
+                    ""
+                );
+
+            if (oneWordResult != -1)
             {
-                subject += splitWords[j] + " ";
-            }
-            subject = subject.Trim();
+                SelectDialogueOption(
+                    oneWordResult
+                );
 
-
-            int commandResult = checkOption(cmd, subject);
-            if (commandResult != -1)
-            {
-                ResetCommandState();
-                onOptionSelected?.Invoke(commandResult);
                 return;
             }
         }
-        Typewriter($"<error>Option '{ogcommand}' is not a valid option</error>");
+
+        /*
+         * Try every command / subject division.
+         *
+         * inspect red door
+         *
+         * inspect | red door
+         * inspect red | door
+         */
+        for (
+            int i = 1;
+            i < splitWords.Length;
+            i++)
+        {
+            string cmd =
+                string.Join(
+                    " ",
+                    splitWords.Take(i)
+                );
+
+            string subject =
+                string.Join(
+                    " ",
+                    splitWords.Skip(i)
+                );
+
+            int commandResult =
+                CheckOption(
+                    cmd,
+                    subject
+                );
+
+            if (commandResult != -1)
+            {
+                SelectDialogueOption(
+                    commandResult
+                );
+
+                return;
+            }
+        }
+
+        Typewriter(
+            $"<error>Option '{originalCommand}' is not a valid option</error>"
+        );
     }
 
-    private int checkOption(string cmd, string subject)
+    IEnumerator PlayTrack(string trackName)
     {
-        string command = $"{cmd} {subject}".Trim();
-        int basicInput = GetOptionID(command);
+        bool check = false;
+        foreach (MusicTrack musicTrack in musicTracks)
+        {
+            if (musicTrack.name.Equals(
+                    trackName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                check = true;
+                m_gameMusic.clip = musicTrack.audioClip;
+                m_gameMusic.Play();
+
+                if (notificationCoroutine != null)
+                {
+                    StopCoroutine(notificationCoroutine);
+                }
+
+                notificationCoroutine =
+                    StartCoroutine(
+                        ShowMusicNotification(trackName)
+                    );
+
+                yield break;
+            }
+        }
+        if(!check)
+        Typewriter(
+            $"<error>There is no track named '{trackName}'</error>"
+        );
+    }
+
+    private IEnumerator ShowMusicNotification(string trackName)
+    {
+        if (notificationUI == null ||
+            notificationText == null ||
+            notificationRect == null ||
+            notificationCanvasGroup == null)
+        {
+            yield break;
+        }
+
+        notificationText.text = trackName;
+
+        /*
+         * Make it invisible BEFORE enabling it.
+         * This prevents a one-frame flash.
+         */
+        notificationCanvasGroup.alpha = 0f;
+
+        notificationUI.SetActive(true);
+
+        /*
+         * IMPORTANT:
+         * Give Unity one frame to calculate the UI layout.
+         */
+        yield return null;
+
+        Canvas.ForceUpdateCanvases();
+
+        /*
+         * Now this is the REAL resting position.
+         */
+        Vector2 visiblePosition =
+            notificationRect.anchoredPosition;
+
+        Vector2 hiddenPosition =
+            visiblePosition +
+            Vector2.right * notificationSlideDistance;
+
+        /*
+         * Start offscreen.
+         */
+        notificationRect.anchoredPosition =
+            hiddenPosition;
+
+        notificationCanvasGroup.alpha =
+            0f;
+
+        /*
+         * Wait another frame so Unity actually renders
+         * the hidden starting position.
+         */
+        yield return null;
+
+        /* ===============================
+         * Slide + Fade In
+         * =============================== */
+
+        float elapsed = 0f;
+
+        while (elapsed < notificationAnimTime)
+        {
+            elapsed += Time.unscaledDeltaTime;
+
+            float t =
+                Mathf.Clamp01(
+                    elapsed / notificationAnimTime
+                );
+
+            float eased =
+                Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    t
+                );
+
+            notificationRect.anchoredPosition =
+                Vector2.Lerp(
+                    hiddenPosition,
+                    visiblePosition,
+                    eased
+                );
+
+            notificationCanvasGroup.alpha =
+                eased;
+
+            yield return null;
+        }
+
+        /*
+         * Guarantee exact final state.
+         */
+        notificationRect.anchoredPosition =
+            visiblePosition;
+
+        notificationCanvasGroup.alpha =
+            1f;
+
+        /* ===============================
+         * Stay Visible
+         * =============================== */
+
+        yield return new WaitForSecondsRealtime(
+            notificationTime
+        );
+
+        /* ===============================
+         * Slide + Fade Out
+         * =============================== */
+
+        elapsed = 0f;
+
+        while (elapsed < notificationAnimTime)
+        {
+            elapsed += Time.unscaledDeltaTime;
+
+            float t =
+                Mathf.Clamp01(
+                    elapsed / notificationAnimTime
+                );
+
+            float eased =
+                Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    t
+                );
+
+            notificationRect.anchoredPosition =
+                Vector2.Lerp(
+                    visiblePosition,
+                    hiddenPosition,
+                    eased
+                );
+
+            notificationCanvasGroup.alpha =
+                1f - eased;
+
+            yield return null;
+        }
+
+        notificationCanvasGroup.alpha =
+            0f;
+
+        /*
+         * Restore resting position before disabling.
+         */
+        notificationRect.anchoredPosition =
+            visiblePosition;
+
+        notificationUI.SetActive(false);
+
+        notificationCoroutine =
+            null;
+    }
+    /*
+     * This is the safe way to invoke a Yarn option.
+     */
+    private void SelectDialogueOption(
+        int optionID)
+    {
+        /*
+         * Store callback BEFORE ResetCommandState(),
+         * because ResetCommandState sets it to null.
+         */
+        Action<int> callback =
+            onOptionSelected;
+
+        ResetCommandState();
+
+        /*
+         * Continue Yarn.
+         */
+        callback?.Invoke(optionID);
+    }
+
+    private int CheckOption(
+        string cmd,
+        string subject)
+    {
+        string command =
+            $"{cmd} {subject}".Trim();
+
+        /*
+         * Exact option first.
+         */
+        int basicInput =
+            GetOptionID(command);
+
         if (basicInput != -1)
         {
             return basicInput;
         }
-        string commandWord = GetBasicCommand(spellChecker.GetBestCorrection(cmd.Trim()));
-        string subjectWord = spellChecker.GetBestCorrection(subject.Trim());
-        command = $"{commandWord} {subjectWord}".Trim();
+
+        if (spellChecker == null)
+            return -1;
+
+        string correctedCommand =
+            spellChecker.GetBestCorrection(
+                cmd.Trim()
+            );
+
+        string commandWord =
+            GetBasicCommand(
+                correctedCommand
+            );
+
+        string subjectWord;
+
+        if (string.IsNullOrWhiteSpace(subject))
+        {
+            subjectWord = "";
+        }
+        else
+        {
+            subjectWord =
+                spellChecker.GetBestCorrection(
+                    subject.Trim()
+                );
+        }
+
+        command =
+            $"{commandWord} {subjectWord}".Trim();
 
         return GetOptionID(command);
     }
 
-    private void RestartDialogue(string nodeName)
+    /* ===============================
+     * Dialogue / Room Restart
+     * =============================== */
+
+    private void RestartDialogue(
+        string nodeName)
     {
+        if (string.IsNullOrEmpty(nodeName))
+        {
+            Debug.LogWarning(
+                "Cannot restart dialogue because node name is empty."
+            );
+
+            return;
+        }
+
         dialogueOptions = null;
+        onOptionSelected = null;
+
         CommandDeselect();
+
         awaitingOptions = false;
+
         m_runner.Stop();
-        m_runner.StartDialogue(nodeName);
+
+        m_runner.StartDialogue(
+            nodeName
+        );
     }
 
     private void ResetCommandState()
     {
         dialogueOptions = null;
-        CommandDeselect();
+        onOptionSelected = null;
+
         awaitingOptions = false;
+
+        CommandDeselect();
     }
+
     private void RestartRoom()
     {
-        string currentRoom = rooms.Peek();
-        RestartDialogue(currentRoom);
+        string currentRoom = null;
+
+        if (
+            rooms != null &&
+            rooms.Count > 0)
+        {
+            currentRoom =
+                rooms.Peek();
+        }
+        else if (
+            m_runner != null &&
+            !string.IsNullOrEmpty(
+                m_runner.CurrentNodeName))
+        {
+            currentRoom =
+                m_runner.CurrentNodeName;
+        }
+
+        if (string.IsNullOrEmpty(currentRoom))
+        {
+            Debug.LogWarning(
+                "Cannot restart room because no current Yarn node exists."
+            );
+
+            return;
+        }
+
+        RestartDialogue(
+            currentRoom
+        );
     }
 
     private IEnumerator RestartRoomNextFrame()
     {
-        yield return null; // Let Yarn fully shut down
+        /*
+         * Wait for Yarn to finish shutting down.
+         */
+        yield return null;
 
         RestartRoom();
     }
+
     /* ===============================
-     * ✍️ Typewriter Effect
+     * Typewriter
      * =============================== */
 
-    public void Typewriter(string text, bool skip = false, bool unskippable = false)
+    public void Typewriter(
+        string text,
+        bool skip = false,
+        bool unskippable = false,
+        Action onComplete = null)
     {
-        this.unskippable = unskippable;
-        text = ReplaceTagsWithColors(text) + "\n";
-        typewriter = WriteText(text, skip);
-        StartCoroutine(typewriter);
+        string processedText =
+            ReplaceTagsWithColors(text) +
+            "\n";
+
+        TypewriterJob job =
+            new TypewriterJob
+            {
+                Text = processedText,
+                Skip = skip,
+                Unskippable = unskippable,
+                OnComplete = onComplete
+            };
+
+        typewriterQueue.Enqueue(job);
+
+        if (!typewriterQueueRunning)
+        {
+            typewriterQueueRunning = true;
+
+            StartCoroutine(
+                ProcessTypewriterQueue()
+            );
+        }
+    }
+
+    private IEnumerator ProcessTypewriterQueue()
+    {
+        while (typewriterQueue.Count > 0)
+        {
+            TypewriterJob job =
+                typewriterQueue.Dequeue();
+
+            activeTypewriterJob =
+                job;
+
+            isTyping = true;
+            skipRequested = false;
+
+            if (m_command != null)
+            {
+                m_command.text = "";
+            }
+
+            /*
+             * Complete expected output for this job.
+             */
+            string finalText =
+                m_result.text +
+                job.Text;
+
+            /*
+             * Instant output.
+             */
+            if (job.Skip)
+            {
+                m_result.text =
+                    finalText;
+
+                ScrollToBottom();
+            }
+            else
+            {
+                bool insideMarkupTag =
+                    false;
+
+                foreach (char letter in job.Text)
+                {
+                    /*
+                     * Skip requested.
+                     */
+                    if (
+                        skipRequested &&
+                        !job.Unskippable)
+                    {
+                        m_result.text =
+                            finalText;
+
+                        ScrollToBottom();
+
+                        break;
+                    }
+
+                    /*
+                     * Don't animate TMP markup.
+                     */
+                    if (
+                        letter == '<' ||
+                        letter == '>' ||
+                        insideMarkupTag)
+                    {
+                        if (letter == '<')
+                        {
+                            insideMarkupTag =
+                                true;
+                        }
+                        else if (letter == '>')
+                        {
+                            insideMarkupTag =
+                                false;
+                        }
+
+                        m_result.text +=
+                            letter;
+
+                        continue;
+                    }
+
+                    /*
+                     * Visible character.
+                     */
+                    if (
+                        m_typingSFX != null &&
+                        typingSFXClip != null)
+                    {
+                        m_typingSFX.PlayOneShot(
+                            typingSFXClip
+                        );
+                    }
+
+                    m_result.text +=
+                        letter;
+
+                    ScrollToBottom();
+
+                    yield return
+                        new WaitForSeconds(
+                            typewriterWait
+                        );
+                }
+            }
+            yield return
+                        new WaitForSeconds(
+                            typewriterLineWait
+                        );
+            /*
+             * This job is finished.
+             */
+            isTyping = false;
+            skipRequested = false;
+            activeTypewriterJob = null;
+
+            /*
+             * Save its callback locally.
+             */
+            Action completionCallback =
+                job.OnComplete;
+
+            /*
+             * Advance Yarn only if THIS job represents
+             * a Yarn line.
+             */
+            completionCallback?.Invoke();
+        }
+
+        typewriterQueueRunning = false;
     }
 
     public void SkipText()
     {
-        if (!unskippable)
-        {
-            m_typingSFX.PlayOneShot(typingSkipClip);
-            StopCoroutine(typewriter);
+        if (activeTypewriterJob == null)
+            return;
 
-            m_result.text = finalText;
-            textToType = "";
-            isTyping = false;
-            FinishDialogue(onDialogueLineFinished);
+        /*
+         * Respect #unskippable.
+         */
+        if (activeTypewriterJob.Unskippable)
+            return;
+
+        if (!skipRequested)
+        {
+            skipRequested = true;
+
+            if (
+                m_typingSFX != null &&
+                typingSkipClip != null)
+            {
+                m_typingSFX.PlayOneShot(
+                    typingSkipClip
+                );
+            }
         }
     }
 
-    private IEnumerator WriteText(string text, bool skip)
+    private void ScrollToBottom()
     {
-        while (isTyping)
-        {
-            yield return new WaitForEndOfFrame();
-        }
-        isTyping = true;
-        finalText = m_result.text + text;
-        m_command.text = "";
-        bool awaitingClosing = false;
-        if (skip)
-        {
-            SkipText();
-            yield return null;
-        }
-        foreach (char letter in text)
-        {
-            // Avoid animating markup tags
-            if (letter == '<' || letter == '>' || awaitingClosing)
-            {
-                awaitingClosing = letter switch
-                {
-                    '<' => true,
-                    '>' => false,
-                    _ => awaitingClosing
-                };
-                m_result.text += letter;
-                continue;
-            }
+        if (m_scrollRect == null)
+            return;
 
-            // Add letter with typing sound
-            m_typingSFX.PlayOneShot(typingSFXClip);
-            m_result.text += letter;
-            m_scrollRect.verticalNormalizedPosition = 0f;
-            yield return new WaitForSeconds(typewriterWait);
-        }
+        Canvas.ForceUpdateCanvases();
 
-        isTyping = false;
-        FinishDialogue(onDialogueLineFinished);
+        m_scrollRect.verticalNormalizedPosition =
+            0f;
     }
 
     /* ===============================
-     * 🧮 Helper Methods
+     * Link Interaction
      * =============================== */
 
     private bool IsTopmostUnderPointer()
@@ -550,183 +1499,433 @@ public class GameController : DialogueViewBase
         if (targetWindowRoot == null)
             return false;
 
-        PointerEventData pointer = new PointerEventData(EventSystem.current);
-        pointer.position = Input.mousePosition;
+        if (EventSystem.current == null)
+            return false;
 
-        List<RaycastResult> results = new List<RaycastResult>();
-        EventSystem.current.RaycastAll(pointer, results);
+        PointerEventData pointer =
+            new PointerEventData(
+                EventSystem.current
+            );
+
+        pointer.position =
+            Input.mousePosition;
+
+        List<RaycastResult> results =
+            new List<RaycastResult>();
+
+        EventSystem.current.RaycastAll(
+            pointer,
+            results
+        );
 
         if (results.Count == 0)
             return false;
 
-        // The UI element the pointer hits FIRST (front-most)
-        GameObject topHit = results[0].gameObject;
+        GameObject topHit =
+            results[0].gameObject;
 
-        // Check if the top-most hit belongs to THIS window
-        return topHit.transform.IsChildOf(targetWindowRoot);
+        return
+            topHit.transform ==
+            targetWindowRoot ||
+            topHit.transform.IsChildOf(
+                targetWindowRoot
+            );
     }
-
 
     private void CheckLinkHover()
     {
-        m_result.ForceMeshUpdate();
-        Camera cam = GetCanvasCamera();
+        if (m_result == null)
+            return;
 
-        int linkIndex = TMP_TextUtilities.FindIntersectingLink(
-            m_result,
-            Input.mousePosition,
-            cam
-        );
+        m_result.ForceMeshUpdate();
+
+        Camera cam =
+            GetCanvasCamera();
+
+        int linkIndex =
+            TMP_TextUtilities.FindIntersectingLink(
+                m_result,
+                Input.mousePosition,
+                cam
+            );
 
         if (linkIndex != -1)
         {
             if (!cursorOverLink)
             {
-                cursorOverLink = true;
-                Cursor.SetCursor(clickableCursor, Vector2.zero, CursorMode.Auto);
+                cursorOverLink =
+                    true;
+
+                Cursor.SetCursor(
+                    clickableCursor,
+                    Vector2.zero,
+                    CursorMode.Auto
+                );
             }
         }
         else
         {
             if (cursorOverLink)
             {
-                cursorOverLink = false;
-                Cursor.SetCursor(defaultCursor, Vector2.zero, CursorMode.Auto);
+                cursorOverLink =
+                    false;
+
+                Cursor.SetCursor(
+                    defaultCursor,
+                    Vector2.zero,
+                    CursorMode.Auto
+                );
             }
         }
     }
 
     private void CheckLinkClick()
     {
-        m_result.ForceMeshUpdate();
-        Camera cam = GetCanvasCamera();
+        if (m_result == null)
+            return;
 
-        int linkIndex = TMP_TextUtilities.FindIntersectingLink(
-            m_result,
-            Input.mousePosition,
-            cam
-        );
+        m_result.ForceMeshUpdate();
+
+        Camera cam =
+            GetCanvasCamera();
+
+        int linkIndex =
+            TMP_TextUtilities.FindIntersectingLink(
+                m_result,
+                Input.mousePosition,
+                cam
+            );
 
         if (linkIndex == -1)
             return;
 
-        TMP_LinkInfo linkInfo = m_result.textInfo.linkInfo[linkIndex];
-        string linkId = linkInfo.GetLinkID().Trim();
+        TMP_LinkInfo linkInfo =
+            m_result
+                .textInfo
+                .linkInfo[linkIndex];
 
-        Sprite sprite = Resources.Load<Sprite>($"Images/{linkId}");
+        string linkId =
+            linkInfo
+                .GetLinkID()
+                .Trim();
+
+        Sprite sprite =
+            Resources.Load<Sprite>(
+                $"Images/{linkId}"
+            );
 
         if (sprite != null)
-            OpenImagePopup(sprite);
+        {
+            OpenImagePopup(
+                sprite
+            );
+        }
         else
         {
-            Debug.LogError($"Sprite '{linkId}' not found in Resources/Images/");
-            OpenImagePopup(null);
+            Debug.LogError(
+                $"Sprite '{linkId}' not found in Resources/Images/"
+            );
         }
     }
 
-
-
-    private void OpenImagePopup(Sprite sprite)
+    private void OpenImagePopup(
+        Sprite sprite)
     {
         if (sprite == null)
         {
-            Debug.LogError("[IMAGE POPUP] Cannot open image popup — sprite was null.");
+            Debug.LogError(
+                "[IMAGE POPUP] Cannot open image popup — sprite was null."
+            );
+
             return;
         }
 
-        m_image.sprite = sprite;
+        if (m_image == null)
+        {
+            Debug.LogError(
+                "[IMAGE POPUP] Image component is not assigned."
+            );
+
+            return;
+        }
+
+        if (m_ImageWindowController == null)
+        {
+            Debug.LogError(
+                "[IMAGE POPUP] WindowController is not assigned."
+            );
+
+            return;
+        }
+
+        m_image.sprite =
+            sprite;
+
         m_ImageWindowController.Maximize();
     }
 
-    private int GetOptionID(string command)
+    private Camera GetCanvasCamera()
     {
-        foreach (var option in dialogueOptions)
-            if (command.Equals(option.Line.RawText))
-                return option.DialogueOptionID;
+        if (m_result == null)
+            return null;
+
+        Canvas canvas =
+            m_result.canvas;
+
+        if (canvas == null)
+            return null;
+
+        if (
+            canvas.renderMode ==
+            RenderMode.ScreenSpaceOverlay)
+        {
+            return null;
+        }
+
+        if (canvas.worldCamera != null)
+        {
+            return canvas.worldCamera;
+        }
+
+        return Camera.main;
+    }
+
+    /* ===============================
+     * Option Helpers
+     * =============================== */
+
+    private int GetOptionID(
+        string command)
+    {
+        if (dialogueOptions == null)
+            return -1;
+
+        if (string.IsNullOrEmpty(command))
+            return -1;
+
+        foreach (
+            DialogueOption option
+            in dialogueOptions)
+        {
+            if (
+                command.Equals(
+                    option.Line.RawText,
+                    StringComparison.OrdinalIgnoreCase
+                ))
+            {
+                return
+                    option.DialogueOptionID;
+            }
+        }
 
         return -1;
     }
 
-    private string GetBasicCommand(string command)
+    private string GetBasicCommand(
+        string command)
     {
-        foreach (List<string> cmds in commands)
+        if (string.IsNullOrEmpty(command))
+            return command;
+
+        if (commands == null)
+            return command;
+
+        foreach (
+            List<string> cmds
+            in commands)
+        {
+            if (cmds == null)
+                continue;
+
             if (cmds.Contains(command))
+            {
                 return cmds.First();
+            }
+        }
 
         return command;
     }
 
-    public string RemoveFluffWords(string input)
+    public string RemoveFluffWords(
+        string input)
     {
-        var words = input.Split(' ').ToList();
-        words.RemoveAll(word => fluff.Contains(word.ToLower()));
-        return string.Join(" ", words);
+        if (string.IsNullOrWhiteSpace(input))
+            return input;
+
+        List<string> inputWords =
+            input
+                .Split(
+                    new[] { ' ' },
+                    StringSplitOptions.RemoveEmptyEntries
+                )
+                .ToList();
+
+        inputWords.RemoveAll(
+            word =>
+                fluff.Contains(
+                    word.ToLowerInvariant()
+                )
+        );
+
+        return string.Join(
+            " ",
+            inputWords
+        );
     }
 
- 
-
-    public string CorrectSentence(string sentence)
+    public string CorrectSentence(
+        string sentence)
     {
-        var correctedWords = sentence.Split(' ')
-            .Select(word => spellChecker.GetBestCorrection(specialChecker.GetBestCorrection(word)) ?? word);
-        return string.Join(" ", correctedWords);
+        if (string.IsNullOrEmpty(sentence))
+            return sentence;
+
+        IEnumerable<string> correctedWords =
+            sentence
+                .Split(' ')
+                .Select(
+                    word =>
+                    {
+                        string special =
+                            specialChecker
+                                .GetBestCorrection(
+                                    word
+                                );
+
+                        string corrected =
+                            spellChecker
+                                .GetBestCorrection(
+                                    special
+                                );
+
+                        return
+                            corrected ?? word;
+                    }
+                );
+
+        return string.Join(
+            " ",
+            correctedWords
+        );
     }
 
-    public string[] FlattenListArray(List<string>[] listOfLists)
+    public string[] FlattenListArray(
+        List<string>[] listOfLists)
     {
-        return listOfLists.SelectMany(list => list).ToArray();
-    }
-    private Camera GetCanvasCamera()
-    {
-        Canvas canvas = m_result.canvas;
-
-        if (canvas.renderMode == RenderMode.ScreenSpaceOverlay)
-            return null;
-
-        return canvas.worldCamera != null ? canvas.worldCamera : Camera.main;
-    }
-
-
-    /* ===============================
-     * 💤 Unused or Debug Helpers
-     * =============================== */
-
-    public string HighlightWords(string[] options, string s)
-    {
-        string colorTag = $"<color=#{ColorUtility.ToHtmlStringRGB(tagColorMap["interactable"])}>";
-        string closeTag = "</color>";
-
-        foreach (string option in options)
+        if (listOfLists == null)
         {
-            string pattern = $@"(?<!{Regex.Escape(colorTag)})\b{Regex.Escape(option)}\b(?!{Regex.Escape(closeTag)})";
-            s = Regex.Replace(s, pattern, match => colorTag + match.Value + closeTag);
+            return Array.Empty<string>();
         }
-        return s;
-    }
 
-    public static string[] ProcessDialogueOptions(DialogueOption[] dialogueOptions)
-    {
-        return dialogueOptions
-            .Select(option =>
-            {
-                string[] words = option.Line.RawText.Split(new[] { ' ' }, 2, StringSplitOptions.RemoveEmptyEntries);
-                return words.Length > 1 ? words[1].Trim() : "";
-            })
+        return listOfLists
+            .Where(
+                list => list != null
+            )
+            .SelectMany(
+                list => list
+            )
             .ToArray();
     }
 
     /* ===============================
-     * ⚙️ Command Input Focus
+     * Optional / Debug Helpers
      * =============================== */
+
+    public string HighlightWords(
+        string[] options,
+        string s)
+    {
+        if (
+            options == null ||
+            string.IsNullOrEmpty(s))
+        {
+            return s;
+        }
+
+        if (
+            !tagColorMap.ContainsKey(
+                "interactable"))
+        {
+            return s;
+        }
+
+        string colorTag =
+            $"<color=#{ColorUtility.ToHtmlStringRGB(tagColorMap["interactable"])}>";
+
+        string closeTag =
+            "</color>";
+
+        foreach (string option in options)
+        {
+            if (string.IsNullOrEmpty(option))
+                continue;
+
+            string pattern =
+                $@"(?<!{Regex.Escape(colorTag)})\b{Regex.Escape(option)}\b(?!{Regex.Escape(closeTag)})";
+
+            s = Regex.Replace(
+                s,
+                pattern,
+                match =>
+                    colorTag +
+                    match.Value +
+                    closeTag
+            );
+        }
+
+        return s;
+    }
+
+    public static string[] ProcessDialogueOptions(
+        DialogueOption[] dialogueOptions)
+    {
+        if (dialogueOptions == null)
+        {
+            return Array.Empty<string>();
+        }
+
+        return dialogueOptions
+            .Select(
+                option =>
+                {
+                    string[] optionWords =
+                        option.Line.RawText.Split(
+                            new[] { ' ' },
+                            2,
+                            StringSplitOptions.RemoveEmptyEntries
+                        );
+
+                    return
+                        optionWords.Length > 1
+                            ? optionWords[1].Trim()
+                            : "";
+                }
+            )
+            .ToArray();
+    }
+
+    /* ===============================
+     * Input Focus
+     * =============================== */
+
     public void CommandSelect()
     {
-        m_command.interactable = true;
+        if (m_command == null)
+            return;
+
+        m_command.interactable =
+            true;
+
         m_command.Select();
+
         m_command.ActivateInputField();
     }
 
     public void CommandDeselect()
     {
-        m_command.interactable = false;
+        if (m_command == null)
+            return;
+
+        m_command.interactable =
+            false;
     }
 }

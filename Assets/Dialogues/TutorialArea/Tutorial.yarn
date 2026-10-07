@@ -1,0 +1,13 @@
+﻿title: Tutorial
+---
+<<set $blockFreeInput = false>>
+
+->scan
+	RD-T5: There is a red door and a blue door. You can ask me to inspect the doors by using the <command>INSPECT</command> command, say something like INSPECT Red Door.
+	<info>Command <command>INSPECT</command> now unlocked</info>
+->inspect red door
+	It's a locked red door
+	<<jump Tutorial>>
+->inspect blue door
+	<<jump location_Small_Office>>
+===

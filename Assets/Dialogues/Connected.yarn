@@ -1,0 +1,11 @@
+﻿title: Connected
+---
+SUCCESS! Connected to HU-D Unit
+HU-D: Hello, detective. I am you trusty Hyperluminal Uplink Detective Unit, or HU-D. I will be 
+HU-D: Would you like to undergo a short guide on using the system? Y/N
+->y
+	<<jump Tutorial>>
+->n
+    Message from the developer: hey, sorry, this is just a demo. Please go through the tutorial for now.
+	<<jump Connected>>
+===
