@@ -245,7 +245,7 @@ public class GameController : DialogueViewBase
         /*
          * Enter submits command.
          */
-        if (Input.GetKeyDown(KeyCode.Return))
+        if (Input.GetKeyDown(KeyCode.Return) && m_command.isFocused)
         {
             SubmitCommand();
         }
