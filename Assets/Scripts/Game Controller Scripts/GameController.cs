@@ -1,4 +1,5 @@
-﻿using System;
+﻿
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -18,15 +19,13 @@ public class GameController : DialogueViewBase
         public string tag;
         public Color color;
     }
+
     [Serializable]
-    public class MusicTrack{
+    public class MusicTrack
+    {
         public string name;
         public AudioClip audioClip;
     }
-
-    /* ===============================
-     * Serialized Fields
-     * =============================== */
 
     [Header("Audio")]
     [SerializeField] private AudioSource m_typingSFX;
@@ -35,6 +34,7 @@ public class GameController : DialogueViewBase
     [SerializeField] private AudioClip typingSFXClip;
     [SerializeField] private AudioClip typingSkipClip;
     [SerializeField] private MusicTrack[] musicTracks;
+
     [Header("UI References")]
     [SerializeField] private TMP_InputField m_command;
     [SerializeField] private ScrollRect m_scrollRect;
@@ -44,19 +44,14 @@ public class GameController : DialogueViewBase
     [SerializeField] private WindowController m_ImageWindowController;
     [SerializeField] private RectTransform targetWindowRoot;
 
-
     [Header("Music Notification")]
     [SerializeField] private GameObject notificationUI;
     [SerializeField] private TMP_Text notificationText;
     [SerializeField] private float notificationTime = 0.8f;
-
     [SerializeField] private CanvasGroup notificationCanvasGroup;
     [SerializeField] private RectTransform notificationRect;
-
     [SerializeField] private float notificationAnimTime = 0.25f;
     [SerializeField] private float notificationSlideDistance = 100f;
-
-    private Coroutine notificationCoroutine;
 
     [Header("Dialogue")]
     [SerializeField] private DialogueRunner m_runner;
@@ -65,7 +60,9 @@ public class GameController : DialogueViewBase
     [SerializeField] private float typewriterLineWait = 0.2f;
 
     [Header("Colors")]
-    [SerializeField] private List<TagColor> tagColorList = new List<TagColor>();
+    [SerializeField]
+    private List<TagColor> tagColorList =
+        new List<TagColor>();
 
     [Header("Defined Values")]
     [SerializeField]
@@ -87,10 +84,6 @@ public class GameController : DialogueViewBase
     [SerializeField] private Texture2D defaultCursor;
     [SerializeField] private Texture2D clickableCursor;
 
-    /* ===============================
-     * Typewriter Job
-     * =============================== */
-
     private class TypewriterJob
     {
         public string Text;
@@ -107,19 +100,11 @@ public class GameController : DialogueViewBase
     private bool typewriterQueueRunning;
     private bool skipRequested;
     private bool isTyping;
-
-    /* ===============================
-     * Dialogue State
-     * =============================== */
+    private bool isRevealingText;
 
     private DialogueOption[] dialogueOptions;
     private Action<int> onOptionSelected;
-
     private bool awaitingOptions;
-
-    /* ===============================
-     * Command State
-     * =============================== */
 
     private List<string>[] commands;
     private List<string> words;
@@ -128,22 +113,20 @@ public class GameController : DialogueViewBase
     private SpellChecker specialChecker;
 
     private Stack<string> rooms;
-
     private Dictionary<string, Color> tagColorMap;
 
-    /* ===============================
-     * Link / Cursor State
-     * =============================== */
-
     private bool cursorOverLink;
-
     private Vector2 mouseDownPos;
 
     private const float dragThreshold = 10f;
 
-    /* ===============================
-     * Unity Lifecycle
-     * =============================== */
+    private Coroutine notificationCoroutine;
+    private Coroutine focusCoroutine;
+    private Coroutine restartCoroutine;
+    private Coroutine automaticRestartCoroutine;
+
+    private bool restartingDialogue;
+    private bool suppressDialogueComplete;
 
     private void Awake()
     {
@@ -168,6 +151,16 @@ public class GameController : DialogueViewBase
 
         rooms = new Stack<string>();
 
+        if (m_command != null)
+        {
+            m_command.lineType =
+                TMP_InputField.LineType.SingleLine;
+
+            m_command.onSubmit.AddListener(
+                OnCommandSubmitted
+            );
+        }
+
         CommandDeselect();
     }
 
@@ -182,16 +175,38 @@ public class GameController : DialogueViewBase
             FlattenListArray(commands)
         );
 
-        StartCoroutine(PlayTrack("smoke and wood"));
+        StartCoroutine(
+            PlayTrack("smoke and wood")
+        );
     }
 
     private void Update()
     {
+        HandleDialogueSkipInput();
+        HandleLinkInteraction();
+        UpdateLocationText();
+    }
+
+    private void HandleDialogueSkipInput()
+    {
+        if (!isRevealingText)
+            return;
+
+        if (m_command != null &&
+            m_command.interactable)
+            return;
+
+        if (Input.GetKeyDown(KeyCode.Return) ||
+            Input.GetKeyDown(KeyCode.KeypadEnter))
+        {
+            SkipText();
+        }
+    }
+
+    private void HandleLinkInteraction()
+    {
         bool isTopmost = IsTopmostUnderPointer();
 
-        /*
-         * Link hover handling.
-         */
         if (isTopmost)
         {
             CheckLinkHover();
@@ -207,9 +222,6 @@ public class GameController : DialogueViewBase
             );
         }
 
-        /*
-         * Mouse click handling.
-         */
         if (Input.GetMouseButtonDown(0) && isTopmost)
         {
             mouseDownPos = Input.mousePosition;
@@ -227,28 +239,20 @@ public class GameController : DialogueViewBase
                 CheckLinkClick();
             }
         }
+    }
 
-        /*
-         * Location display.
-         */
-        if (m_locationText != null)
-        {
-            string location =
-                rooms != null && rooms.Count > 0
-                    ? rooms.Peek()
-                    : "Not Connected";
+    private void UpdateLocationText()
+    {
+        if (m_locationText == null)
+            return;
 
-            m_locationText.text =
-                $"LOCATION: {location}";
-        }
+        string location =
+            rooms != null && rooms.Count > 0
+                ? rooms.Peek()
+                : "Not Connected";
 
-        /*
-         * Enter submits command.
-         */
-        if (Input.GetKeyDown(KeyCode.Return) && m_command.isFocused)
-        {
-            SubmitCommand();
-        }
+        m_locationText.text =
+            $"LOCATION: {location}";
     }
 
     private void OnDisable()
@@ -265,15 +269,146 @@ public class GameController : DialogueViewBase
         }
     }
 
-    /* ===============================
-     * Yarn Commands
-     * =============================== */
+    private void OnDestroy()
+    {
+        if (m_command != null)
+        {
+            m_command.onSubmit.RemoveListener(
+                OnCommandSubmitted
+            );
+        }
+    }
+
+    private void OnCommandSubmitted(string value)
+    {
+        if (m_command == null)
+            return;
+
+        if (!m_command.interactable)
+            return;
+
+        if (!awaitingOptions)
+            return;
+
+        if (isTyping || typewriterQueueRunning)
+            return;
+
+        SubmitCommand();
+    }
+
+    public void SubmitCommand()
+    {
+        if (m_command == null)
+            return;
+
+        if (!m_command.interactable)
+            return;
+
+        if (!awaitingOptions)
+            return;
+
+        if (isTyping || typewriterQueueRunning)
+            return;
+
+        string commandText =
+            m_command.text.Trim();
+
+        if (string.IsNullOrEmpty(commandText))
+        {
+            RequestCommandFocus();
+            return;
+        }
+
+        CommandDeselect();
+
+        m_command.SetTextWithoutNotify("");
+
+        Typewriter(
+            $"<command>>{commandText}</command>",
+            true
+        );
+
+        if (dialogueOptions != null &&
+            dialogueOptions.Length > 0)
+        {
+            HandleDialogueCommand(commandText);
+        }
+        else
+        {
+            TryEnableCommandInput();
+        }
+    }
+
+    private void RequestCommandFocus()
+    {
+        if (focusCoroutine != null)
+        {
+            StopCoroutine(focusCoroutine);
+        }
+
+        focusCoroutine = StartCoroutine(
+            RestoreCommandFocus()
+        );
+    }
+
+    private IEnumerator RestoreCommandFocus()
+    {
+        yield return null;
+
+        focusCoroutine = null;
+
+        if (m_command == null)
+            yield break;
+
+        if (!m_command.interactable)
+            yield break;
+
+        if (!m_command.gameObject.activeInHierarchy)
+            yield break;
+
+        if (EventSystem.current != null)
+        {
+            GameObject selected =
+                EventSystem.current.currentSelectedGameObject;
+
+            if (selected != null &&
+                selected != m_command.gameObject)
+            {
+                yield break;
+            }
+
+            EventSystem.current.SetSelectedGameObject(
+                m_command.gameObject
+            );
+        }
+
+        m_command.ActivateInputField();
+    }
+
+    private void TryEnableCommandInput()
+    {
+        if (!awaitingOptions)
+            return;
+
+        if (restartingDialogue)
+            return;
+
+        if (isTyping || typewriterQueueRunning)
+            return;
+
+        if (typewriterQueue.Count > 0)
+            return;
+
+        CommandSelect();
+    }
 
     [YarnCommand("playsfx")]
     public void PlaySFX(string sfxName)
     {
         AudioClip clip =
-            Resources.Load<AudioClip>($"SFX/{sfxName}");
+            Resources.Load<AudioClip>(
+                $"SFX/{sfxName}"
+            );
 
         if (clip != null)
         {
@@ -290,10 +425,6 @@ public class GameController : DialogueViewBase
         }
     }
 
-    /* ===============================
-     * Room Tracking
-     * =============================== */
-
     private void CheckRoom()
     {
         if (m_runner == null)
@@ -305,9 +436,6 @@ public class GameController : DialogueViewBase
         if (string.IsNullOrEmpty(currentRoom))
             return;
 
-        /*
-         * Don't count Start as a room.
-         */
         if (string.Equals(
                 currentRoom,
                 "start",
@@ -328,35 +456,49 @@ public class GameController : DialogueViewBase
                     new[] { '_' },
                     StringSplitOptions.RemoveEmptyEntries
                 );
-        
+
         string toType = "";
         string roomName = "";
-        
-        for(int i = 1; i < splitWords.Length; i++){
+
+        for (int i = 1; i < splitWords.Length; i++)
+        {
             roomName += splitWords[i] + " ";
         }
 
-        if(roomName == ""){
+        if (roomName == "")
+        {
             roomName = currentRoom;
-        }else{
+        }
+        else
+        {
             roomName = roomName.Trim();
         }
-        switch(splitWords[0]){
-            case "location": toType = $"<system>{systemName}: CURRENT LOCATION: {roomName}</system>"; break;
-            case "person": toType = $"<system>{systemName}: SPEAKING TO: {roomName}</system>"; break;
-            case "object": toType = $"<system>{systemName}: INSPECTING: {roomName}</system>"; break;
 
-            default: toType = $"<system>{systemName}: {roomName}</system>"; break;
+        switch (splitWords[0])
+        {
+            case "location":
+                toType =
+                    $"<system>{systemName}: CURRENT LOCATION: {roomName}</system>";
+                break;
+
+            case "person":
+                toType =
+                    $"<system>{systemName}: SPEAKING TO: {roomName}</system>";
+                break;
+
+            case "object":
+                toType =
+                    $"<system>{systemName}: INSPECTING: {roomName}</system>";
+                break;
+
+            default:
+                toType =
+                    $"<system>{systemName}: {roomName}</system>";
+                break;
         }
 
-        Typewriter(
-            toType
-        );
+        Typewriter(toType);
     }
-
-    /* ===============================
-     * DialogueViewBase Overrides
-     * =============================== */
 
     public override void RunLine(
         LocalizedLine dialogueLine,
@@ -410,12 +552,6 @@ public class GameController : DialogueViewBase
                 $"</info>";
         }
 
-        /*
-         * IMPORTANT:
-         *
-         * This Yarn callback belongs specifically to this
-         * typewriter job.
-         */
         Typewriter(
             output,
             false,
@@ -438,25 +574,28 @@ public class GameController : DialogueViewBase
 
         CheckRoom();
 
-        CommandSelect();
+        TryEnableCommandInput();
     }
 
     public override void DialogueComplete()
     {
-        /*
-         * Preserve your existing room behavior.
-         */
-        if (!awaitingOptions)
-        {
+        if (suppressDialogueComplete)
+            return;
+
+        if (restartingDialogue)
+            return;
+
+        if (awaitingOptions)
+            return;
+
+        if (automaticRestartCoroutine != null)
+            return;
+
+        automaticRestartCoroutine =
             StartCoroutine(
                 RestartRoomNextFrame()
             );
-        }
     }
-
-    /* ===============================
-     * Yarn / TMP Markup
-     * =============================== */
 
     public string PaletteMarkedUpText(
         Yarn.Markup.MarkupParseResult line,
@@ -466,10 +605,6 @@ public class GameController : DialogueViewBase
         string lineOfText =
             line.Text;
 
-        /*
-         * Process markup backwards because inserting TMP tags
-         * changes string positions.
-         */
         line.Attributes.Sort(
             (a, b) =>
                 b.Position.CompareTo(a.Position)
@@ -543,8 +678,7 @@ public class GameController : DialogueViewBase
         return lineOfText;
     }
 
-    public string ReplaceTagsWithColors(
-        string input)
+    public string ReplaceTagsWithColors(string input)
     {
         if (string.IsNullOrEmpty(input))
             return input;
@@ -555,8 +689,7 @@ public class GameController : DialogueViewBase
             KeyValuePair<string, Color> kvp
             in tagColorMap)
         {
-            string tag =
-                kvp.Key;
+            string tag = kvp.Key;
 
             string htmlColor =
                 ColorUtility.ToHtmlStringRGB(
@@ -621,8 +754,7 @@ public class GameController : DialogueViewBase
         return input;
     }
 
-    private string WrapInteractables(
-        string input)
+    private string WrapInteractables(string input)
     {
         if (string.IsNullOrEmpty(input))
             return input;
@@ -639,52 +771,6 @@ public class GameController : DialogueViewBase
         );
     }
 
-    /* ===============================
-     * Command Input
-     * =============================== */
-
-    public void SubmitCommand()
-    {
-        /*
-         * Enter while text is being typed =
-         * skip current text instead.
-         */
-        if (isTyping)
-        {
-            SkipText();
-            return;
-        }
-
-        string commandText =
-            m_command.text.Trim();
-
-        if (string.IsNullOrEmpty(commandText))
-        {
-            CommandSelect();
-            return;
-        }
-
-        /*
-         * Echo player's command.
-         */
-        Typewriter(
-            $"<command>>{commandText}</command>",
-            true
-        );
-
-        /*
-         * Process Yarn option.
-         */
-        if (
-            dialogueOptions != null &&
-            dialogueOptions.Length > 0)
-        {
-            HandleDialogueCommand(
-                commandText
-            );
-        }
-    }
-
     private void HandleDialogueCommand(
         string commandText)
     {
@@ -694,20 +780,11 @@ public class GameController : DialogueViewBase
         string command =
             originalCommand;
 
-        /* ===============================
-         * Free Text Input
-         * =============================== */
-
         int waitingInputOption =
             GetOptionID("waitinginput");
 
         if (waitingInputOption != -1)
         {
-            /*
-             * Your original validation allows letters only.
-             *
-             * Spaces, numbers and punctuation are rejected.
-             */
             if (
                 commandText.Length > 50 ||
                 commandText.Length < 1 ||
@@ -723,20 +800,11 @@ public class GameController : DialogueViewBase
                 return;
             }
 
-            /*
-             * Store player's entered value.
-             */
             m_runner.VariableStorage.SetValue(
                 "$inputVariable",
                 commandText
             );
 
-            /*
-             * CRITICAL FIX:
-             *
-             * SelectDialogueOption saves the Yarn callback
-             * BEFORE ResetCommandState() clears it.
-             */
             SelectDialogueOption(
                 waitingInputOption
             );
@@ -744,10 +812,6 @@ public class GameController : DialogueViewBase
             return;
         }
 
-
-        /*
-        * Exact match first.
-        */
         int exactResult =
             GetOptionID(command);
 
@@ -759,25 +823,29 @@ public class GameController : DialogueViewBase
 
             return;
         }
-        else
+
+        int oneWordResult =
+            CheckOption(
+                command,
+                ""
+            );
+
+        if (oneWordResult != -1)
         {
-            int oneWordResult =
-                CheckOption(
-                    command,
-                    ""
-                );
+            SelectDialogueOption(
+                oneWordResult
+            );
 
-            if (oneWordResult != -1)
-            {
-                SelectDialogueOption(
-                    oneWordResult
-                );
-
-                return;
-            }
+            return;
         }
+
         bool blockFreeInput = false;
-        m_runner.VariableStorage.TryGetValue<bool>("$blockFreeInput", out blockFreeInput);
+
+        m_runner.VariableStorage.TryGetValue<bool>(
+            "$blockFreeInput",
+            out blockFreeInput
+        );
+
         if (blockFreeInput)
         {
             Typewriter(
@@ -786,19 +854,32 @@ public class GameController : DialogueViewBase
 
             return;
         }
-        /* ===============================
-         * Location
-         * =============================== */
+
 
         if (command == "location")
         {
-            RestartRoom();
+            string currentRoom =
+                rooms != null && rooms.Count > 0
+                    ? rooms.Peek()
+                    : "Not Connected";
+
+            string roomName = currentRoom;
+
+            if (currentRoom.StartsWith("location_",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                roomName = currentRoom.Substring(9);
+            }
+
+            roomName = roomName.Replace("_", " ");
+
+            Typewriter(
+                $"<system>{systemName}: CURRENT LOCATION: {roomName}</system>"
+            );
+
             return;
         }
 
-        /* ===============================
-         * Go Back
-         * =============================== */
 
         if (command == "go back")
         {
@@ -824,11 +905,6 @@ public class GameController : DialogueViewBase
             return;
         }
 
-        /* ===============================
-         * Normal Commands
-         * =============================== */
-
-
         string[] fluffSplitWords =
             command
                 .Trim()
@@ -836,6 +912,7 @@ public class GameController : DialogueViewBase
                     new[] { ' ' },
                     StringSplitOptions.RemoveEmptyEntries
                 );
+
         command =
             RemoveFluffWords(command);
 
@@ -865,24 +942,27 @@ public class GameController : DialogueViewBase
             return;
         }
 
-        if(splitWords[0] == "play"){
+        if (splitWords[0] == "play")
+        {
             string track = "";
-            for(int i = 1; i < fluffSplitWords.Length; i++){
+
+            for (int i = 1; i < fluffSplitWords.Length; i++)
+            {
                 track += fluffSplitWords[i] + " ";
             }
+
             track = track.Trim();
-            StartCoroutine(PlayTrack(track));
+
+            StartCoroutine(
+                PlayTrack(track)
+            );
+
             return;
         }
 
-       
-
-        /*
-         * Single word command.
-         */
         if (splitWords.Length == 1)
         {
-            int oneWordResult =
+            oneWordResult =
                 CheckOption(
                     splitWords[0],
                     ""
@@ -898,18 +978,7 @@ public class GameController : DialogueViewBase
             }
         }
 
-        /*
-         * Try every command / subject division.
-         *
-         * inspect red door
-         *
-         * inspect | red door
-         * inspect red | door
-         */
-        for (
-            int i = 1;
-            i < splitWords.Length;
-            i++)
+        for (int i = 1; i < splitWords.Length; i++)
         {
             string cmd =
                 string.Join(
@@ -944,18 +1013,21 @@ public class GameController : DialogueViewBase
         );
     }
 
-    IEnumerator PlayTrack(string trackName)
+    private IEnumerator PlayTrack(string trackName)
     {
-        bool check = false;
         foreach (MusicTrack musicTrack in musicTracks)
         {
             if (musicTrack.name.Equals(
                     trackName,
                     StringComparison.OrdinalIgnoreCase))
             {
-                check = true;
-                m_gameMusic.clip = musicTrack.audioClip;
-                m_gameMusic.Play();
+                if (m_gameMusic != null)
+                {
+                    m_gameMusic.clip =
+                        musicTrack.audioClip;
+
+                    m_gameMusic.Play();
+                }
 
                 if (notificationCoroutine != null)
                 {
@@ -970,7 +1042,7 @@ public class GameController : DialogueViewBase
                 yield break;
             }
         }
-        if(!check)
+
         Typewriter(
             $"<error>There is no track named '{trackName}'</error>"
         );
@@ -988,25 +1060,14 @@ public class GameController : DialogueViewBase
 
         notificationText.text = trackName;
 
-        /*
-         * Make it invisible BEFORE enabling it.
-         * This prevents a one-frame flash.
-         */
         notificationCanvasGroup.alpha = 0f;
 
         notificationUI.SetActive(true);
 
-        /*
-         * IMPORTANT:
-         * Give Unity one frame to calculate the UI layout.
-         */
         yield return null;
 
         Canvas.ForceUpdateCanvases();
 
-        /*
-         * Now this is the REAL resting position.
-         */
         Vector2 visiblePosition =
             notificationRect.anchoredPosition;
 
@@ -1014,24 +1075,12 @@ public class GameController : DialogueViewBase
             visiblePosition +
             Vector2.right * notificationSlideDistance;
 
-        /*
-         * Start offscreen.
-         */
         notificationRect.anchoredPosition =
             hiddenPosition;
 
-        notificationCanvasGroup.alpha =
-            0f;
+        notificationCanvasGroup.alpha = 0f;
 
-        /*
-         * Wait another frame so Unity actually renders
-         * the hidden starting position.
-         */
         yield return null;
-
-        /* ===============================
-         * Slide + Fade In
-         * =============================== */
 
         float elapsed = 0f;
 
@@ -1064,26 +1113,14 @@ public class GameController : DialogueViewBase
             yield return null;
         }
 
-        /*
-         * Guarantee exact final state.
-         */
         notificationRect.anchoredPosition =
             visiblePosition;
 
-        notificationCanvasGroup.alpha =
-            1f;
-
-        /* ===============================
-         * Stay Visible
-         * =============================== */
+        notificationCanvasGroup.alpha = 1f;
 
         yield return new WaitForSecondsRealtime(
             notificationTime
         );
-
-        /* ===============================
-         * Slide + Fade Out
-         * =============================== */
 
         elapsed = 0f;
 
@@ -1116,38 +1153,23 @@ public class GameController : DialogueViewBase
             yield return null;
         }
 
-        notificationCanvasGroup.alpha =
-            0f;
+        notificationCanvasGroup.alpha = 0f;
 
-        /*
-         * Restore resting position before disabling.
-         */
         notificationRect.anchoredPosition =
             visiblePosition;
 
         notificationUI.SetActive(false);
 
-        notificationCoroutine =
-            null;
+        notificationCoroutine = null;
     }
-    /*
-     * This is the safe way to invoke a Yarn option.
-     */
-    private void SelectDialogueOption(
-        int optionID)
+
+    private void SelectDialogueOption(int optionID)
     {
-        /*
-         * Store callback BEFORE ResetCommandState(),
-         * because ResetCommandState sets it to null.
-         */
         Action<int> callback =
             onOptionSelected;
 
         ResetCommandState();
 
-        /*
-         * Continue Yarn.
-         */
         callback?.Invoke(optionID);
     }
 
@@ -1158,9 +1180,6 @@ public class GameController : DialogueViewBase
         string command =
             $"{cmd} {subject}".Trim();
 
-        /*
-         * Exact option first.
-         */
         int basicInput =
             GetOptionID(command);
 
@@ -1202,12 +1221,7 @@ public class GameController : DialogueViewBase
         return GetOptionID(command);
     }
 
-    /* ===============================
-     * Dialogue / Room Restart
-     * =============================== */
-
-    private void RestartDialogue(
-        string nodeName)
+    private void RestartDialogue(string nodeName)
     {
         if (string.IsNullOrEmpty(nodeName))
         {
@@ -1218,18 +1232,54 @@ public class GameController : DialogueViewBase
             return;
         }
 
+        if (automaticRestartCoroutine != null)
+        {
+            StopCoroutine(automaticRestartCoroutine);
+            automaticRestartCoroutine = null;
+        }
+
+        if (restartCoroutine != null)
+        {
+            StopCoroutine(restartCoroutine);
+            restartCoroutine = null;
+        }
+
         dialogueOptions = null;
         onOptionSelected = null;
+        awaitingOptions = false;
 
         CommandDeselect();
 
-        awaitingOptions = false;
+        restartingDialogue = true;
+
+        restartCoroutine =
+            StartCoroutine(
+                RestartDialogueCoroutine(nodeName)
+            );
+    }
+
+    private IEnumerator RestartDialogueCoroutine(string nodeName)
+    {
+        if (m_runner == null)
+        {
+            restartingDialogue = false;
+            restartCoroutine = null;
+            yield break;
+        }
+
+        suppressDialogueComplete = true;
 
         m_runner.Stop();
 
-        m_runner.StartDialogue(
-            nodeName
-        );
+        yield return null;
+
+        m_runner.StartDialogue(nodeName);
+
+        suppressDialogueComplete = false;
+        restartingDialogue = false;
+        restartCoroutine = null;
+
+        TryEnableCommandInput();
     }
 
     private void ResetCommandState()
@@ -1240,18 +1290,20 @@ public class GameController : DialogueViewBase
         awaitingOptions = false;
 
         CommandDeselect();
+
+        if (m_command != null)
+        {
+            m_command.SetTextWithoutNotify("");
+        }
     }
 
     private void RestartRoom()
     {
         string currentRoom = null;
 
-        if (
-            rooms != null &&
-            rooms.Count > 0)
+        if (rooms != null && rooms.Count > 0)
         {
-            currentRoom =
-                rooms.Peek();
+            currentRoom = rooms.Peek();
         }
         else if (
             m_runner != null &&
@@ -1271,24 +1323,23 @@ public class GameController : DialogueViewBase
             return;
         }
 
-        RestartDialogue(
-            currentRoom
-        );
+        RestartDialogue(currentRoom);
     }
 
     private IEnumerator RestartRoomNextFrame()
     {
-        /*
-         * Wait for Yarn to finish shutting down.
-         */
         yield return null;
+
+        automaticRestartCoroutine = null;
+
+        if (restartingDialogue)
+            yield break;
+
+        if (awaitingOptions)
+            yield break;
 
         RestartRoom();
     }
-
-    /* ===============================
-     * Typewriter
-     * =============================== */
 
     public void Typewriter(
         string text,
@@ -1328,59 +1379,39 @@ public class GameController : DialogueViewBase
             TypewriterJob job =
                 typewriterQueue.Dequeue();
 
-            activeTypewriterJob =
-                job;
+            activeTypewriterJob = job;
 
             isTyping = true;
+            isRevealingText = !job.Skip;
             skipRequested = false;
 
-            if (m_command != null)
-            {
-                m_command.text = "";
-            }
-
-            /*
-             * Complete expected output for this job.
-             */
             string finalText =
                 m_result.text +
                 job.Text;
 
-            /*
-             * Instant output.
-             */
             if (job.Skip)
             {
-                m_result.text =
-                    finalText;
+                m_result.text = finalText;
 
                 ScrollToBottom();
             }
             else
             {
-                bool insideMarkupTag =
-                    false;
+                bool insideMarkupTag = false;
 
                 foreach (char letter in job.Text)
                 {
-                    /*
-                     * Skip requested.
-                     */
                     if (
                         skipRequested &&
                         !job.Unskippable)
                     {
-                        m_result.text =
-                            finalText;
+                        m_result.text = finalText;
 
                         ScrollToBottom();
 
                         break;
                     }
 
-                    /*
-                     * Don't animate TMP markup.
-                     */
                     if (
                         letter == '<' ||
                         letter == '>' ||
@@ -1388,24 +1419,18 @@ public class GameController : DialogueViewBase
                     {
                         if (letter == '<')
                         {
-                            insideMarkupTag =
-                                true;
+                            insideMarkupTag = true;
                         }
                         else if (letter == '>')
                         {
-                            insideMarkupTag =
-                                false;
+                            insideMarkupTag = false;
                         }
 
-                        m_result.text +=
-                            letter;
+                        m_result.text += letter;
 
                         continue;
                     }
 
-                    /*
-                     * Visible character.
-                     */
                     if (
                         m_typingSFX != null &&
                         typingSFXClip != null)
@@ -1415,42 +1440,37 @@ public class GameController : DialogueViewBase
                         );
                     }
 
-                    m_result.text +=
-                        letter;
+                    m_result.text += letter;
 
                     ScrollToBottom();
 
-                    yield return
-                        new WaitForSeconds(
-                            typewriterWait
-                        );
+                    yield return new WaitForSeconds(
+                        typewriterWait
+                    );
                 }
             }
-            yield return
-                        new WaitForSeconds(
-                            typewriterLineWait
-                        );
-            /*
-             * This job is finished.
-             */
+
+            isRevealingText = false;
+
+            yield return new WaitForSeconds(
+                typewriterLineWait
+            );
+
             isTyping = false;
             skipRequested = false;
             activeTypewriterJob = null;
 
-            /*
-             * Save its callback locally.
-             */
             Action completionCallback =
                 job.OnComplete;
 
-            /*
-             * Advance Yarn only if THIS job represents
-             * a Yarn line.
-             */
             completionCallback?.Invoke();
         }
 
         typewriterQueueRunning = false;
+        isTyping = false;
+        isRevealingText = false;
+
+        TryEnableCommandInput();
     }
 
     public void SkipText()
@@ -1458,24 +1478,24 @@ public class GameController : DialogueViewBase
         if (activeTypewriterJob == null)
             return;
 
-        /*
-         * Respect #unskippable.
-         */
+        if (!isRevealingText)
+            return;
+
         if (activeTypewriterJob.Unskippable)
             return;
 
-        if (!skipRequested)
-        {
-            skipRequested = true;
+        if (skipRequested)
+            return;
 
-            if (
-                m_typingSFX != null &&
-                typingSkipClip != null)
-            {
-                m_typingSFX.PlayOneShot(
-                    typingSkipClip
-                );
-            }
+        skipRequested = true;
+
+        if (
+            m_typingSFX != null &&
+            typingSkipClip != null)
+        {
+            m_typingSFX.PlayOneShot(
+                typingSkipClip
+            );
         }
     }
 
@@ -1486,13 +1506,8 @@ public class GameController : DialogueViewBase
 
         Canvas.ForceUpdateCanvases();
 
-        m_scrollRect.verticalNormalizedPosition =
-            0f;
+        m_scrollRect.verticalNormalizedPosition = 0f;
     }
-
-    /* ===============================
-     * Link Interaction
-     * =============================== */
 
     private bool IsTopmostUnderPointer()
     {
@@ -1553,8 +1568,7 @@ public class GameController : DialogueViewBase
         {
             if (!cursorOverLink)
             {
-                cursorOverLink =
-                    true;
+                cursorOverLink = true;
 
                 Cursor.SetCursor(
                     clickableCursor,
@@ -1563,19 +1577,15 @@ public class GameController : DialogueViewBase
                 );
             }
         }
-        else
+        else if (cursorOverLink)
         {
-            if (cursorOverLink)
-            {
-                cursorOverLink =
-                    false;
+            cursorOverLink = false;
 
-                Cursor.SetCursor(
-                    defaultCursor,
-                    Vector2.zero,
-                    CursorMode.Auto
-                );
-            }
+            Cursor.SetCursor(
+                defaultCursor,
+                Vector2.zero,
+                CursorMode.Auto
+            );
         }
     }
 
@@ -1616,9 +1626,7 @@ public class GameController : DialogueViewBase
 
         if (sprite != null)
         {
-            OpenImagePopup(
-                sprite
-            );
+            OpenImagePopup(sprite);
         }
         else
         {
@@ -1628,8 +1636,7 @@ public class GameController : DialogueViewBase
         }
     }
 
-    private void OpenImagePopup(
-        Sprite sprite)
+    private void OpenImagePopup(Sprite sprite)
     {
         if (sprite == null)
         {
@@ -1658,8 +1665,7 @@ public class GameController : DialogueViewBase
             return;
         }
 
-        m_image.sprite =
-            sprite;
+        m_image.sprite = sprite;
 
         m_ImageWindowController.Maximize();
     }
@@ -1690,12 +1696,7 @@ public class GameController : DialogueViewBase
         return Camera.main;
     }
 
-    /* ===============================
-     * Option Helpers
-     * =============================== */
-
-    private int GetOptionID(
-        string command)
+    private int GetOptionID(string command)
     {
         if (dialogueOptions == null)
             return -1;
@@ -1713,16 +1714,14 @@ public class GameController : DialogueViewBase
                     StringComparison.OrdinalIgnoreCase
                 ))
             {
-                return
-                    option.DialogueOptionID;
+                return option.DialogueOptionID;
             }
         }
 
         return -1;
     }
 
-    private string GetBasicCommand(
-        string command)
+    private string GetBasicCommand(string command)
     {
         if (string.IsNullOrEmpty(command))
             return command;
@@ -1730,9 +1729,7 @@ public class GameController : DialogueViewBase
         if (commands == null)
             return command;
 
-        foreach (
-            List<string> cmds
-            in commands)
+        foreach (List<string> cmds in commands)
         {
             if (cmds == null)
                 continue;
@@ -1746,8 +1743,7 @@ public class GameController : DialogueViewBase
         return command;
     }
 
-    public string RemoveFluffWords(
-        string input)
+    public string RemoveFluffWords(string input)
     {
         if (string.IsNullOrWhiteSpace(input))
             return input;
@@ -1773,8 +1769,7 @@ public class GameController : DialogueViewBase
         );
     }
 
-    public string CorrectSentence(
-        string sentence)
+    public string CorrectSentence(string sentence)
     {
         if (string.IsNullOrEmpty(sentence))
             return sentence;
@@ -1797,8 +1792,7 @@ public class GameController : DialogueViewBase
                                     special
                                 );
 
-                        return
-                            corrected ?? word;
+                        return corrected ?? word;
                     }
                 );
 
@@ -1825,10 +1819,6 @@ public class GameController : DialogueViewBase
             )
             .ToArray();
     }
-
-    /* ===============================
-     * Optional / Debug Helpers
-     * =============================== */
 
     public string HighlightWords(
         string[] options,
@@ -1903,21 +1893,17 @@ public class GameController : DialogueViewBase
             .ToArray();
     }
 
-    /* ===============================
-     * Input Focus
-     * =============================== */
-
     public void CommandSelect()
     {
         if (m_command == null)
             return;
 
-        m_command.interactable =
-            true;
+        m_command.interactable = true;
 
-        m_command.Select();
+        if (!m_command.gameObject.activeInHierarchy)
+            return;
 
-        m_command.ActivateInputField();
+        RequestCommandFocus();
     }
 
     public void CommandDeselect()
@@ -1925,7 +1911,21 @@ public class GameController : DialogueViewBase
         if (m_command == null)
             return;
 
-        m_command.interactable =
-            false;
+        if (focusCoroutine != null)
+        {
+            StopCoroutine(focusCoroutine);
+            focusCoroutine = null;
+        }
+
+        m_command.interactable = false;
+
+        if (EventSystem.current != null &&
+            EventSystem.current.currentSelectedGameObject ==
+            m_command.gameObject)
+        {
+            EventSystem.current.SetSelectedGameObject(
+                null
+            );
+        }
     }
 }

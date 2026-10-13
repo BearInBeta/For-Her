@@ -21,6 +21,7 @@ public class StickyNotes : MonoBehaviour
     [SerializeField] private GameObject stickyNote;
     [SerializeField] private Transform stickyNotesLayout;
     [SerializeField] private Transform stickyNotesHolder;
+    [SerializeField] private float offsetChanger = 0.2f;
 
     // Start is called before the first frame update
     void Start()
@@ -32,6 +33,7 @@ public class StickyNotes : MonoBehaviour
             newNote.GetComponent<StickyNoteCreator>().color = note;
             newNote.GetComponent<Image>().color = note.color;
         }
+
     }
 
     // Update is called once per frame
@@ -48,6 +50,16 @@ public class StickyNotes : MonoBehaviour
         newNote.GetComponent<StickyNoteElements>().placeholder.color = color.placeholderColor;
         newNote.GetComponent<StickyNoteElements>().text.color = color.textColor;
 
+    }
+
+    public void RecenterNotes()
+    {
+        float offset = 0;
+        foreach(StickyNoteElements sne in stickyNotesHolder.GetComponentsInChildren<StickyNoteElements>())
+        {
+            sne.gameObject.transform.position = new Vector2(offset, offset);
+            offset += offsetChanger;
+        }
     }
 
 

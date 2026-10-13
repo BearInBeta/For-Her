@@ -1,3 +1,4 @@
+
 using System.Collections;
 using UnityEngine;
 
@@ -8,54 +9,66 @@ public class WindowController : MonoBehaviour
 
     private string minimizeTrigger = "Minimize";
     private string maximizeTrigger = "Maximize";
+    private string closeTrigger = "Close";
+
     private Vector3 originalPosition;
+    private Coroutine disableCoroutine;
+
     private void Awake()
     {
         originalPosition = transform.position;
         animator = GetComponent<Animator>();
         canvasGroup = GetComponent<CanvasGroup>();
 
-        // STARTUP: match animator state to actual GameObject state
         if (gameObject.activeSelf)
         {
-            // Window should start fully open
             animator.Play("Idle", 0, 1f);
             canvasGroup.alpha = 1;
             canvasGroup.interactable = true;
             canvasGroup.blocksRaycasts = true;
         }
-        else
-        {
-            // Window should start fully closed
-            animator.Play("Idle", 0, 1f);
-        }
-        
     }
-    private void Start()
-    {
-
-        
-    }
-
-
-
 
     public void Minimize()
     {
         if (!gameObject.activeSelf)
             return;
 
+        StopDisableCoroutine();
 
         canvasGroup.interactable = false;
         canvasGroup.blocksRaycasts = false;
+
+        animator.ResetTrigger(maximizeTrigger);
         animator.SetTrigger(minimizeTrigger);
 
-        StartCoroutine(DisableAfterAnimation());
+        disableCoroutine = StartCoroutine(
+            DisableAfterAnimation("Minimize", false)
+        );
+    }
 
+    public void Close()
+    {
+        if (!gameObject.activeSelf)
+            return;
+
+        StopDisableCoroutine();
+
+        canvasGroup.interactable = false;
+        canvasGroup.blocksRaycasts = false;
+
+        animator.ResetTrigger(maximizeTrigger);
+        animator.ResetTrigger(minimizeTrigger);
+        animator.SetTrigger(closeTrigger);
+
+        disableCoroutine = StartCoroutine(
+            DisableAfterAnimation("Close", true)
+        );
     }
 
     public void Maximize()
     {
+        StopDisableCoroutine();
 
         if (gameObject.activeSelf)
         {
@@ -63,24 +76,46 @@ public class WindowController : MonoBehaviour
             transform.position = originalPosition;
         }
 
-        // Enable object first
         gameObject.SetActive(true);
 
-
-        // Disable interaction until animation is done
-
-
+        animator.ResetTrigger(minimizeTrigger);
+        animator.ResetTrigger(closeTrigger);
         animator.SetTrigger(maximizeTrigger);
+
         canvasGroup.interactable = true;
         canvasGroup.blocksRaycasts = true;
-       
     }
 
-
-
-    private IEnumerator DisableAfterAnimation()
+    private IEnumerator DisableAfterAnimation(
+        string stateName,
+        bool resetPosition
+    )
     {
-        yield return new WaitForSeconds(animator.GetCurrentAnimatorStateInfo(0).length);
+        // Wait until Animator enters the requested state.
+        yield return new WaitUntil(() =>
+            animator.GetCurrentAnimatorStateInfo(0).IsName(stateName)
+        );
+
+        // Wait until the animation finishes.
+        yield return new WaitUntil(() =>
+            animator.GetCurrentAnimatorStateInfo(0).normalizedTime >= 1f
+        );
+
+        if (resetPosition)
+        {
+            transform.position = originalPosition;
+        }
+
+        disableCoroutine = null;
         gameObject.SetActive(false);
+    }
+
+    private void StopDisableCoroutine()
+    {
+        if (disableCoroutine != null)
+        {
+            StopCoroutine(disableCoroutine);
+            disableCoroutine = null;
+        }
     }
 }
