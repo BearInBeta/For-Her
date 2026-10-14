@@ -2345,7 +2345,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.2916667}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.2916667}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -2573,7 +2573,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.9291667}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.9291667}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -2784,7 +2784,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.50416666}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.50416666}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -3293,7 +3293,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   SCShader: {fileID: 4800000, guid: 240c17d4cd1b7f34fb7191e55d511841, type: 3}
-  Fade: 0.161
+  Fade: 0.15
 --- !u!1 &572458276
 GameObject:
   m_ObjectHideFlags: 0
@@ -4449,7 +4449,7 @@ CanvasGroup:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 791358182}
   m_Enabled: 1
-  m_Alpha: 1
+  m_Alpha: 0
   m_Interactable: 1
   m_BlocksRaycasts: 1
   m_IgnoreParentGroups: 0
@@ -5045,7 +5045,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!114 &836360382
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5795,7 +5795,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.575}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.575}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -6116,7 +6116,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.43333334}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.43333334}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -8690,7 +8690,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.7875}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.7875}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -8766,7 +8766,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.7166667}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.7166667}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -9786,7 +9786,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.6458333}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.6458333}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -9862,7 +9862,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.3625}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.3625}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -10333,7 +10333,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.8583333}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.8583333}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -11695,6 +11695,7 @@ GameObject:
   - component: {fileID: 1907418139}
   - component: {fileID: 1907418138}
   - component: {fileID: 1907418140}
+  - component: {fileID: 1907418141}
   m_Layer: 0
   m_Name: GameController
   m_TagString: Untagged
@@ -11730,18 +11731,7 @@ MonoBehaviour:
     audioClip: {fileID: 8300000, guid: a162b3752a0536845a80b45515bdc8ba, type: 3}
   - name: hefti
     audioClip: {fileID: 8300000, guid: 1521b9e832a828b488a7ef86c8c321c5, type: 3}
-  loadingScreenRoot: {fileID: 836360381}
-  loadingScreenCanvasGroup: {fileID: 836360386}
-  loadingBackground: {fileID: 1834049513}
-  loadingSpinner: {fileID: 259618703}
-  loadingScreenLabel: {fileID: 832632830}
-  mainCanvas: {fileID: 177734900}
-  loadingBackgroundColor: {r: 0.14901961, g: 0.09019608, b: 0.18823531, a: 1}
-  loadingSpinnerColor: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 1}
-  loadingSpinnerSpeed: 180
-  loadingScreenText: STARTING UP
-  loadingScreenFont: {fileID: 11400000, guid: e875f4a86147eff44a19474a0aac8bd3, type: 2}
-  loadingFadeDuration: 0.45
+  loadingScreen: {fileID: 1907418141}
   m_command: {fileID: 159214308}
   m_scrollRect: {fileID: 1871828604}
   m_result: {fileID: 2052350098}
@@ -11812,6 +11802,30 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 43d4d1e4bb5d53a479d7c5e5a5f24adf, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!114 &1907418141
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1907418137}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0be00bf9cd867d3469c8ac48d1423bb8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  loadingScreenRoot: {fileID: 836360381}
+  loadingScreenCanvasGroup: {fileID: 836360386}
+  loadingBackground: {fileID: 1834049513}
+  loadingSpinner: {fileID: 259618703}
+  loadingScreenLabel: {fileID: 832632830}
+  mainCanvas: {fileID: 177734900}
+  loadingBackgroundColor: {r: 0.1254902, g: 0.06666667, b: 0.15294118, a: 1}
+  loadingSpinnerColor: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 1}
+  loadingSpinnerSpeed: 180
+  loadingScreenText: STARTING UP
+  loadingScreenFont: {fileID: 11400000, guid: e875f4a86147eff44a19474a0aac8bd3, type: 2}
+  loadingFadeDuration: 0.45
 --- !u!1 &1920390797
 GameObject:
   m_ObjectHideFlags: 0
@@ -11942,7 +11956,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 0.22083335}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 0.22083335}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -12272,7 +12286,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0.3019608, g: 0.47843137, b: 0.8509804, a: 1}
+  m_Color: {r: 0.94509804, g: 0.84705883, b: 0.4117647, a: 1}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1

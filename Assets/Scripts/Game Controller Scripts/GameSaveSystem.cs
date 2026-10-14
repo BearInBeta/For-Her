@@ -105,7 +105,7 @@ public sealed class GameSaveSystem : MonoBehaviour
         }
         finally
         {
-            if (controller != null) controller.DismissRestoreLoadingScreen();
+            if (controller != null) controller.loadingScreen.Dismiss();
             readyToSave = isActiveAndEnabled;
             sessionCoroutine = null;
         }
@@ -129,7 +129,7 @@ public sealed class GameSaveSystem : MonoBehaviour
     private void OnDisable()
     {
         if (sessionCoroutine != null) StopCoroutine(sessionCoroutine);
-        if (controller != null) controller.DismissRestoreLoadingScreen();
+        if (controller != null) controller.loadingScreen.Dismiss();
         if (readyToSave) SaveNow();
     }
     private void OnApplicationPause(bool paused) { if (paused) SaveNow(); }
