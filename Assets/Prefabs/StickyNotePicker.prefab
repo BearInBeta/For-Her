@@ -68,8 +68,8 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 21300000, guid: 6955fcb82208fce4984e4ed8d732126a, type: 3}
-  m_Type: 0
+  m_Sprite: {fileID: -529550991, guid: 6955fcb82208fce4984e4ed8d732126a, type: 3}
+  m_Type: 1
   m_PreserveAspect: 0
   m_FillCenter: 1
   m_FillMethod: 4
@@ -147,4 +147,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   stickyNotes: {fileID: 0}
-  color: {r: 1, g: 1, b: 1, a: 1}
+  color:
+    color: {r: 0, g: 0, b: 0, a: 0}
+    textColor: {r: 0, g: 0, b: 0, a: 0}
+    placeholderColor: {r: 0, g: 0, b: 0, a: 0}
+    exitColor: {r: 0, g: 0, b: 0, a: 0}

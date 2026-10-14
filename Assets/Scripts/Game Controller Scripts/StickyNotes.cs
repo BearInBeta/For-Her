@@ -63,7 +63,7 @@ public class StickyNotes : MonoBehaviour
 
         foreach (Transform child in stickyNotesHolder)
         {
-            if (child == null || !child.gameObject.activeSelf) continue;
+            if (child == null || !child.gameObject.activeSelf || child.gameObject.GetComponent<SavedElement>()) continue;
             var note = child.GetComponent<StickyNoteElements>();
             if (note == null) continue;
 
@@ -91,8 +91,10 @@ public class StickyNotes : MonoBehaviour
         // at end of frame; the save driver waits a frame before autosaving.
         foreach (var note in stickyNotesHolder.GetComponentsInChildren<StickyNoteElements>(true))
         {
-            note.gameObject.SetActive(false);
-            Destroy(note.gameObject);
+            if (!note.gameObject.GetComponent<SavedElement>()) { 
+                note.gameObject.SetActive(false);
+                Destroy(note.gameObject);
+            }
         }
         foreach (var state in states)
         {

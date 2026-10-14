@@ -1,4 +1,3 @@
-
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -37,11 +36,28 @@ public class GameController : DialogueViewBase
     [SerializeField] private MusicTrack[] musicTracks;
 
     [Header("Session Loading Screen")]
-    [SerializeField] private Color loadingBackgroundColor = new Color(0.025f, 0.03f, 0.045f, 1f);
+    [SerializeField] private GameObject loadingScreenRoot;
+    [SerializeField] private CanvasGroup loadingScreenCanvasGroup;
+    [SerializeField] private Image loadingBackground;
+    [SerializeField] private RectTransform loadingSpinner;
+    [SerializeField] private TMP_Text loadingScreenLabel;
+    [SerializeField] private GameObject mainCanvas;
+    [Header("Loading Screen Appearance")]
+    [SerializeField]
+    private Color loadingBackgroundColor =
+        new Color(0.025f, 0.03f, 0.045f, 1f);
+
     [SerializeField] private Color loadingSpinnerColor = Color.white;
     [SerializeField, Min(0f)] private float loadingSpinnerSpeed = 180f;
     [SerializeField] private string loadingScreenText = "Restoring session...";
     [SerializeField] private TMP_FontAsset loadingScreenFont;
+
+    [Header("Loading Screen Fade")]
+    [SerializeField, Min(0f)] private float loadingFadeDuration = 0.45f;
+
+    private bool loadingFadeActive;
+    private float loadingFadeElapsed;
+    private float loadingFadeStartAlpha;
 
     [Header("UI References")]
     [SerializeField] private TMP_InputField m_command;
@@ -206,6 +222,8 @@ public class GameController : DialogueViewBase
         HandleLinkInteraction();
         UpdateLocationText();
         TryRestoreDeferredCaret();
+
+        UpdateLoadingScreenFade();
     }
 
     private void HandleDialogueSkipInput()
@@ -277,7 +295,8 @@ public class GameController : DialogueViewBase
 
     private void OnDisable()
     {
-        DismissRestoreLoadingScreen();
+        HideRestoreLoadingScreenImmediately();
+
         if (cursorOverLink)
         {
             cursorOverLink = false;
@@ -522,7 +541,7 @@ public class GameController : DialogueViewBase
     private void TypeRoom()
     {
         string room = CheckRoom();
-        if(room != "")
+        if (room != "")
         {
             Typewriter($"<system>{systemName}: " + room + "</system>");
         }
@@ -2044,84 +2063,139 @@ public class GameController : DialogueViewBase
     private bool restorePendingYarnLine;
     private Action pendingRestoreLineCallback;
     private int pendingCaretPosition = -1;
-    private GameObject loadingOverlay;
-    private RectTransform loadingSpinner;
+
 
     private void ShowRestoreLoadingScreen()
     {
-        if (loadingOverlay != null) return;
-        loadingOverlay = new GameObject("Session Restore Loading Screen",
-            typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
-        Canvas canvas = loadingOverlay.GetComponent<Canvas>();
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.overrideSorting = true;
-        canvas.sortingOrder = 32767;
-        CanvasScaler scaler = loadingOverlay.GetComponent<CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1920, 1080);
-
-        GameObject backdrop = new GameObject("Backdrop", typeof(RectTransform), typeof(Image));
-        backdrop.transform.SetParent(loadingOverlay.transform, false);
-        RectTransform rect = (RectTransform)backdrop.transform;
-        rect.anchorMin = Vector2.zero;
-        rect.anchorMax = Vector2.one;
-        rect.offsetMin = Vector2.zero;
-        rect.offsetMax = Vector2.zero;
-        Image background = backdrop.GetComponent<Image>();
-        background.color = loadingBackgroundColor;
-        background.raycastTarget = true;
-
-        GameObject spinner = new GameObject("Spinner", typeof(RectTransform));
-        spinner.transform.SetParent(backdrop.transform, false);
-        loadingSpinner = (RectTransform)spinner.transform;
-        loadingSpinner.anchorMin = loadingSpinner.anchorMax = new Vector2(0.5f, 0.5f);
-        loadingSpinner.sizeDelta = new Vector2(90f, 90f);
-        loadingSpinner.anchoredPosition = new Vector2(0f, 25f);
-        for (int i = 0; i < 12; i++)
+        if (loadingScreenRoot == null)
         {
-            GameObject segment = new GameObject("Segment " + i, typeof(RectTransform), typeof(Image));
-            segment.transform.SetParent(loadingSpinner, false);
-            RectTransform segmentRect = (RectTransform)segment.transform;
-            segmentRect.anchorMin = segmentRect.anchorMax = new Vector2(0.5f, 0.5f);
-            segmentRect.sizeDelta = new Vector2(9f, 24f);
-            float angle = i * 30f;
-            float radians = angle * Mathf.Deg2Rad;
-            segmentRect.anchoredPosition = new Vector2(Mathf.Sin(radians), Mathf.Cos(radians)) * 37f;
-            segmentRect.localRotation = Quaternion.Euler(0f, 0f, -angle);
-            Color color = loadingSpinnerColor;
-            color.a *= Mathf.Lerp(0.15f, 1f, (i + 1f) / 12f);
-            Image line = segment.GetComponent<Image>();
-            line.color = color;
-            line.raycastTarget = false;
+            Debug.LogWarning("Loading Screen Root is not assigned.");
+            return;
         }
 
-        GameObject text = new GameObject("Loading Text", typeof(RectTransform), typeof(TextMeshProUGUI));
-        text.transform.SetParent(backdrop.transform, false);
-        rect = (RectTransform)text.transform;
-        rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
-        rect.sizeDelta = new Vector2(900f, 70f);
-        rect.anchoredPosition = new Vector2(0f, -100f);
-        TextMeshProUGUI label = text.GetComponent<TextMeshProUGUI>();
-        label.text = loadingScreenText;
-        if (loadingScreenFont != null) label.font = loadingScreenFont;
-        label.fontSize = 36;
-        label.color = Color.white;
-        label.alignment = TextAlignmentOptions.Center;
-        label.raycastTarget = false;
+        loadingFadeActive = false;
+        loadingFadeElapsed = 0f;
+
+        loadingScreenRoot.SetActive(true);
+
+        if (loadingScreenCanvasGroup != null)
+        {
+            loadingScreenCanvasGroup.alpha = 1f;
+            loadingScreenCanvasGroup.interactable = false;
+            loadingScreenCanvasGroup.blocksRaycasts = true;
+        }
+
+        if (loadingBackground != null)
+        {
+            loadingBackground.color = loadingBackgroundColor;
+        }
+
+        if (loadingSpinner != null)
+        {
+            Image[] images = loadingSpinner.GetComponentsInChildren<Image>(true);
+
+            foreach (Image image in images)
+            {
+                Color color = loadingSpinnerColor;
+                color.a *= image.color.a;
+                image.color = color;
+            }
+        }
+
+        if (loadingScreenLabel != null)
+        {
+            loadingScreenLabel.text = loadingScreenText;
+
+            if (loadingScreenFont != null)
+                loadingScreenLabel.font = loadingScreenFont;
+        }
     }
 
     internal void TickLoadingScreen(float deltaTime)
     {
+        if (loadingScreenRoot == null ||
+            !loadingScreenRoot.activeInHierarchy)
+            return;
+
         if (loadingSpinner != null)
-            loadingSpinner.Rotate(0f, 0f, -loadingSpinnerSpeed * deltaTime);
+        {
+            loadingSpinner.Rotate(
+                0f,
+                0f,
+                -loadingSpinnerSpeed * deltaTime
+            );
+        }
     }
 
     internal void DismissRestoreLoadingScreen()
     {
-        if (loadingOverlay == null) return;
-        Destroy(loadingOverlay);
-        loadingOverlay = null;
-        loadingSpinner = null;
+        if(mainCanvas != null)
+            mainCanvas.SetActive(true);
+        if (loadingScreenRoot == null ||
+            !loadingScreenRoot.activeSelf)
+            return;
+
+        if (loadingFadeActive)
+            return;
+
+        if (loadingScreenCanvasGroup == null ||
+            loadingFadeDuration <= 0f)
+        {
+            HideRestoreLoadingScreenImmediately();
+            return;
+        }
+
+        loadingFadeElapsed = 0f;
+        loadingFadeStartAlpha = loadingScreenCanvasGroup.alpha;
+        loadingFadeActive = true;
+    }
+
+    private void UpdateLoadingScreenFade()
+    {
+        if (!loadingFadeActive)
+            return;
+
+        if (loadingScreenRoot == null ||
+            !loadingScreenRoot.activeInHierarchy ||
+            loadingScreenCanvasGroup == null)
+        {
+            loadingFadeActive = false;
+            return;
+        }
+
+        loadingFadeElapsed += Time.unscaledDeltaTime;
+
+        float t = Mathf.Clamp01(
+            loadingFadeElapsed / Mathf.Max(0.0001f, loadingFadeDuration)
+        );
+
+        float eased = Mathf.SmoothStep(0f, 1f, t);
+
+        loadingScreenCanvasGroup.alpha =
+            Mathf.Lerp(loadingFadeStartAlpha, 0f, eased);
+
+        if (t >= 1f)
+        {
+            HideRestoreLoadingScreenImmediately();
+        }
+    }
+
+    private void HideRestoreLoadingScreenImmediately()
+    {
+        loadingFadeActive = false;
+        loadingFadeElapsed = 0f;
+
+        if (loadingScreenCanvasGroup != null)
+        {
+            loadingScreenCanvasGroup.alpha = 0f;
+            loadingScreenCanvasGroup.interactable = false;
+            loadingScreenCanvasGroup.blocksRaycasts = false;
+        }
+
+        if (loadingScreenRoot != null)
+        {
+            loadingScreenRoot.SetActive(false);
+        }
     }
 
     private void ResetInterruptedTyping()
@@ -2344,9 +2418,16 @@ public class GameController : DialogueViewBase
         // Guarantee that no previously open window remains as an invisible
         // raycast-blocking overlay. Closed windows are left closed.
         GameSaveSystem.MinimizeAllWindows();
+        yield return new WaitForSeconds(2);
         DismissRestoreLoadingScreen();
     }
-
+    public void MinimizeAll()
+    {
+        foreach (WindowController window in Resources.FindObjectsOfTypeAll<WindowController>())
+        {
+            window.Close();
+        }
+    }
     private void ResumeSavedTyping(GameSaveSystem.SaveData saved)
     {
         if (saved.version < 3 || saved.typingJobs == null) return;
@@ -2493,21 +2574,22 @@ public class GameController : DialogueViewBase
         }
         if (m_gameMusic != null && !string.IsNullOrEmpty(data.music))
         {
-            
+
             if (data.music != "")
             {
                 StartCoroutine(
                     PlayTrack(data.music)
                 );
             }
-            
-            
+
+
         }
-        
+
     }
 
     /// <summary>Intentionally not connected to any UI or terminal command.</summary>
-    public void DeleteCurrentSave() { 
+    public void DeleteCurrentSave()
+    {
         GameSaveSystem.DeleteCurrentSave();
         SceneManager.LoadScene(SceneManager.GetActiveScene().name);
     }

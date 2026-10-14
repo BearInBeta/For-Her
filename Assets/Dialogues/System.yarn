@@ -1,17 +1,18 @@
 ﻿title: Start
+position: -124,-45
 ---
 <<set $blockFreeInput = true>>
 <<set $inputVariable = "">>
 ->connect
  >>> SYSTEM BOOTING...#nochevron
- >>> MEMORY CHECK:198 KB FREE #nocharacter #nochevron
+ >>> MEMORY CHECK... #nocharacter #nochevron
  >>> ENTER NAME: #nochevron #nocharacter
 
 ->waitinginput
 <<set $playerName = $inputVariable>>
 Hello, {$playerName}
 
->>> Connecting to R-Unit...#nochevron
+>>> Connecting to HU-D-Unit...#nochevron
 ████████████████████████████████████████#unskippable #nochevron
 <<jump Connected>>
 ===
