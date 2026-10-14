@@ -1,9 +1,12 @@
 
 using System.Collections;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 public class WindowController : MonoBehaviour
 {
+    public enum WindowState { Open, Minimized, Closed }
+    public WindowState State { get; private set; } = WindowState.Open;
     private Animator animator;
     private CanvasGroup canvasGroup;
 
@@ -29,11 +32,14 @@ public class WindowController : MonoBehaviour
         }
     }
 
+   
+
     public void Minimize()
     {
         if (!gameObject.activeSelf)
             return;
 
+        State = WindowState.Minimized;
         StopDisableCoroutine();
 
         canvasGroup.interactable = false;
@@ -52,6 +58,7 @@ public class WindowController : MonoBehaviour
         if (!gameObject.activeSelf)
             return;
 
+        State = WindowState.Closed;
         StopDisableCoroutine();
 
         canvasGroup.interactable = false;
@@ -68,6 +75,7 @@ public class WindowController : MonoBehaviour
 
     public void Maximize()
     {
+        State = WindowState.Open;
         StopDisableCoroutine();
 
         if (gameObject.activeSelf)
@@ -78,12 +86,37 @@ public class WindowController : MonoBehaviour
 
         gameObject.SetActive(true);
 
+        // Bring this window to the front.
+        transform.SetAsLastSibling();
+
         animator.ResetTrigger(minimizeTrigger);
         animator.ResetTrigger(closeTrigger);
         animator.SetTrigger(maximizeTrigger);
 
         canvasGroup.interactable = true;
         canvasGroup.blocksRaycasts = true;
+    }
+
+    public void RestoreState(WindowState state, bool active)
+    {
+        StopDisableCoroutine();
+        State = state;
+        // Preserve the restored window position when it is opened again.
+        // Maximize() uses originalPosition when reactivating a minimized window.
+        originalPosition = transform.position;
+        bool show = active && state == WindowState.Open;
+        gameObject.SetActive(show);
+        if (show && animator != null)
+        {
+            animator.Play("Idle", 0, 1f);
+            animator.Update(0f);
+        }
+        if (canvasGroup != null)
+        {
+            canvasGroup.alpha = show ? 1f : 0f;
+            canvasGroup.interactable = show;
+            canvasGroup.blocksRaycasts = show;
+        }
     }
 
     private IEnumerator DisableAfterAnimation(

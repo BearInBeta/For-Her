@@ -17,6 +17,8 @@ public class WindowDraggable : MonoBehaviour, IPointerDownHandler, IDragHandler
 
     public void OnPointerDown(PointerEventData eventData)
     {
+        transform.SetAsLastSibling();
+
         // Only allow dragging if clicked inside the top bar
         if (IsPointerInsideTop(eventData))
         {

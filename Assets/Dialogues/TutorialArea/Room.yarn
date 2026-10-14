@@ -5,10 +5,10 @@
 	RD-T5: I see a drawer, a window, and a man.
 ->inspect drawer
 	RD-T5: There is a key.
-	<<jump Office>>
+	<<jump location_Small_Office>>
 ->inspect window
 	RD-T5: It's raining
-	<<jump Office>>
+	<<jump location_Small_Office>>
 ->show man
 	<link=osama hasan>osama_hasan.png</link>
 ===

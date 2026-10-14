@@ -1,4 +1,4 @@
-﻿
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using Yarn;
 using Yarn.Unity;
@@ -34,6 +35,13 @@ public class GameController : DialogueViewBase
     [SerializeField] private AudioClip typingSFXClip;
     [SerializeField] private AudioClip typingSkipClip;
     [SerializeField] private MusicTrack[] musicTracks;
+
+    [Header("Session Loading Screen")]
+    [SerializeField] private Color loadingBackgroundColor = new Color(0.025f, 0.03f, 0.045f, 1f);
+    [SerializeField] private Color loadingSpinnerColor = Color.white;
+    [SerializeField, Min(0f)] private float loadingSpinnerSpeed = 180f;
+    [SerializeField] private string loadingScreenText = "Restoring session...";
+    [SerializeField] private TMP_FontAsset loadingScreenFont;
 
     [Header("UI References")]
     [SerializeField] private TMP_InputField m_command;
@@ -84,12 +92,16 @@ public class GameController : DialogueViewBase
     [SerializeField] private Texture2D defaultCursor;
     [SerializeField] private Texture2D clickableCursor;
 
+    private string playingTrackName;
     private class TypewriterJob
     {
         public string Text;
         public bool Skip;
         public bool Unskippable;
         public Action OnComplete;
+        public int CharactersWritten;
+        public int ResumeAt;
+        public bool IsYarnLine;
     }
 
     private readonly Queue<TypewriterJob> typewriterQueue =
@@ -175,9 +187,17 @@ public class GameController : DialogueViewBase
             FlattenListArray(commands)
         );
 
-        StartCoroutine(
-            PlayTrack("smoke and wood")
-        );
+
+
+        // The restore coroutine MUST be hosted by GameSaveSystem, NOT by this
+        // DialogueViewBase: DialogueRunner.StartDialogue calls StopAllCoroutines
+        // on every dialogue view when changing the node.
+        GameSaveSystem saves = GetComponent<GameSaveSystem>();
+        if (saves == null)
+        {
+            saves = gameObject.AddComponent<GameSaveSystem>();
+        }
+        saves.BeginSession(this, RestoreSavedSession());
     }
 
     private void Update()
@@ -185,6 +205,7 @@ public class GameController : DialogueViewBase
         HandleDialogueSkipInput();
         HandleLinkInteraction();
         UpdateLocationText();
+        TryRestoreDeferredCaret();
     }
 
     private void HandleDialogueSkipInput()
@@ -250,13 +271,13 @@ public class GameController : DialogueViewBase
             rooms != null && rooms.Count > 0
                 ? rooms.Peek()
                 : "Not Connected";
-
         m_locationText.text =
-            $"LOCATION: {location}";
+            $"{(CheckRoom() == "" ? "NOT CONNECTED" : CheckRoom())}";
     }
 
     private void OnDisable()
     {
+        DismissRestoreLoadingScreen();
         if (cursorOverLink)
         {
             cursorOverLink = false;
@@ -425,27 +446,25 @@ public class GameController : DialogueViewBase
         }
     }
 
-    private void CheckRoom()
+    private string CheckRoom()
     {
         if (m_runner == null)
-            return;
+            return "";
 
         string currentRoom =
             m_runner.CurrentNodeName;
 
         if (string.IsNullOrEmpty(currentRoom))
-            return;
+            return "";
 
         if (string.Equals(
                 currentRoom,
                 "start",
                 StringComparison.OrdinalIgnoreCase))
         {
-            return;
+            return "";
         }
 
-        if (rooms.Contains(currentRoom))
-            return;
 
         rooms.Push(currentRoom);
 
@@ -478,33 +497,59 @@ public class GameController : DialogueViewBase
         {
             case "location":
                 toType =
-                    $"<system>{systemName}: CURRENT LOCATION: {roomName}</system>";
+                    $"CURRENT LOCATION: {roomName}";
                 break;
 
             case "person":
                 toType =
-                    $"<system>{systemName}: SPEAKING TO: {roomName}</system>";
+                    $"SPEAKING TO: {roomName}";
                 break;
 
             case "object":
                 toType =
-                    $"<system>{systemName}: INSPECTING: {roomName}</system>";
+                    $"INSPECTING: {roomName}";
                 break;
 
             default:
                 toType =
-                    $"<system>{systemName}: {roomName}</system>";
+                    $"{roomName}";
                 break;
         }
 
-        Typewriter(toType);
+        return toType;
     }
 
+    private void TypeRoom()
+    {
+        string room = CheckRoom();
+        if(room != "")
+        {
+            Typewriter($"<system>{systemName}: " + room + "</system>");
+        }
+    }
     public override void RunLine(
         LocalizedLine dialogueLine,
         Action onDialogueLineFinished)
     {
-        CheckRoom();
+        // The index is relative to the latest selected Yarn option. This lets
+        // replay find the precise line at which the dialogue was interrupted.
+        lineOrdinalSinceChoice++;
+        if (restoringSession)
+        {
+            if (restorePendingYarnLine && pendingRestoreLineCallback == null &&
+                replayedChoiceCount == restoreChoiceCount &&
+                lineOrdinalSinceChoice == restoreTargetLineOrdinal &&
+                (string.IsNullOrEmpty(restoreTargetNode) || m_runner == null ||
+                 m_runner.CurrentNodeName == restoreTargetNode))
+            {
+                // IMPORTANT: don't acknowledge this line to Yarn yet. Keep its
+                // actual completion callback alive until the saved text finishes.
+                pendingRestoreLineCallback = onDialogueLineFinished;
+                return;
+            }
+            onDialogueLineFinished?.Invoke();
+            return;
+        }
 
         string charName =
             dialogueLine.CharacterName;
@@ -556,7 +601,8 @@ public class GameController : DialogueViewBase
             output,
             false,
             unskippable,
-            onDialogueLineFinished
+            onDialogueLineFinished,
+            true
         );
     }
 
@@ -572,13 +618,15 @@ public class GameController : DialogueViewBase
         this.onOptionSelected =
             onOptionSelected;
 
-        CheckRoom();
-
-        TryEnableCommandInput();
+        if (!restoringSession)
+        {
+            TryEnableCommandInput();
+        }
     }
 
     public override void DialogueComplete()
     {
+        if (restoringSession) return;
         if (suppressDialogueComplete)
             return;
 
@@ -1027,6 +1075,7 @@ public class GameController : DialogueViewBase
                         musicTrack.audioClip;
 
                     m_gameMusic.Play();
+                    playingTrackName = trackName;
                 }
 
                 if (notificationCoroutine != null)
@@ -1165,12 +1214,37 @@ public class GameController : DialogueViewBase
 
     private void SelectDialogueOption(int optionID)
     {
-        Action<int> callback =
-            onOptionSelected;
+        Action<int> callback = onOptionSelected;
+        if (callback == null) return;
 
+        // Yarn Spinner does not publicly serialize its VM instruction pointer.
+        // Record the actual chosen option path so we can rebuild that pointer.
+        if (!restoringSession)
+        {
+            // Periodically checkpoint long sessions so Yarn choice replay
+            // and save files stay bounded.
+            if (choiceHistory.Count >= 512)
+            {
+                historyStartNode = m_runner != null ? m_runner.CurrentNodeName : historyStartNode;
+                choiceHistory.Clear();
+            }
+            string input = "";
+            if (m_runner != null && m_runner.VariableStorage != null)
+                m_runner.VariableStorage.TryGetValue<string>("$inputVariable", out input);
+            choiceHistory.Add(new GameSaveSystem.ChoiceState
+            {
+                node = m_runner != null ? m_runner.CurrentNodeName : "",
+                optionId = optionID,
+                inputValue = input
+            });
+        }
+
+        // Track RunLine calls only since the last selection. This counter is
+        // replayed even while dialogue is being fast-forwarded on load.
+        lineOrdinalSinceChoice = 0;
+        if (restoringSession) replayedChoiceCount++;
         ResetCommandState();
-
-        callback?.Invoke(optionID);
+        callback.Invoke(optionID);
     }
 
     private int CheckOption(
@@ -1273,13 +1347,19 @@ public class GameController : DialogueViewBase
 
         yield return null;
 
-        m_runner.StartDialogue(nodeName);
-
+        // Yarn's StartDialogue stops ALL coroutines on dialogue views,
+        // including this restart coroutine. Clear state BEFORE calling it.
+        typewriterQueue.Clear();
+        activeTypewriterJob = null;
+        typewriterQueueRunning = false;
+        isTyping = false;
+        isRevealingText = false;
+        skipRequested = false;
         suppressDialogueComplete = false;
         restartingDialogue = false;
         restartCoroutine = null;
-
-        TryEnableCommandInput();
+        m_runner.StartDialogue(nodeName);
+        // RunOptions enables input when the new node reaches its prompt.
     }
 
     private void ResetCommandState()
@@ -1345,8 +1425,14 @@ public class GameController : DialogueViewBase
         string text,
         bool skip = false,
         bool unskippable = false,
-        Action onComplete = null)
+        Action onComplete = null,
+        bool yarnLine = false)
     {
+        if (restoringSession)
+        {
+            onComplete?.Invoke();
+            return;
+        }
         string processedText =
             ReplaceTagsWithColors(text) +
             "\n";
@@ -1357,7 +1443,8 @@ public class GameController : DialogueViewBase
                 Text = processedText,
                 Skip = skip,
                 Unskippable = unskippable,
-                OnComplete = onComplete
+                OnComplete = onComplete,
+                IsYarnLine = yarnLine
             };
 
         typewriterQueue.Enqueue(job);
@@ -1385,13 +1472,16 @@ public class GameController : DialogueViewBase
             isRevealingText = !job.Skip;
             skipRequested = false;
 
+            int resumeAt = Mathf.Clamp(job.ResumeAt, 0, job.Text.Length);
+            job.CharactersWritten = resumeAt;
             string finalText =
                 m_result.text +
-                job.Text;
+                job.Text.Substring(resumeAt);
 
             if (job.Skip)
             {
                 m_result.text = finalText;
+                job.CharactersWritten = job.Text.Length;
 
                 ScrollToBottom();
             }
@@ -1399,13 +1489,15 @@ public class GameController : DialogueViewBase
             {
                 bool insideMarkupTag = false;
 
-                foreach (char letter in job.Text)
+                for (int i = resumeAt; i < job.Text.Length; i++)
                 {
+                    char letter = job.Text[i];
                     if (
                         skipRequested &&
                         !job.Unskippable)
                     {
                         m_result.text = finalText;
+                        job.CharactersWritten = job.Text.Length;
 
                         ScrollToBottom();
 
@@ -1427,6 +1519,7 @@ public class GameController : DialogueViewBase
                         }
 
                         m_result.text += letter;
+                        job.CharactersWritten = i + 1;
 
                         continue;
                     }
@@ -1441,6 +1534,7 @@ public class GameController : DialogueViewBase
                     }
 
                     m_result.text += letter;
+                    job.CharactersWritten = i + 1;
 
                     ScrollToBottom();
 
@@ -1927,5 +2021,494 @@ public class GameController : DialogueViewBase
                 null
             );
         }
+    }
+
+    public void QuitGame()
+    {
+        Application.Quit();
+    }
+
+
+    // === Session restoration ===
+    // The IEnumerator below is *executed by GameSaveSystem*, which Yarn
+    // does not treat as a dialogue view. Never StartCoroutine it on this class.
+    private readonly List<GameSaveSystem.ChoiceState> choiceHistory =
+        new List<GameSaveSystem.ChoiceState>();
+    private string historyStartNode;
+    private bool restoringSession;
+    private int lineOrdinalSinceChoice;
+    private int replayedChoiceCount;
+    private int restoreChoiceCount;
+    private int restoreTargetLineOrdinal;
+    private string restoreTargetNode;
+    private bool restorePendingYarnLine;
+    private Action pendingRestoreLineCallback;
+    private int pendingCaretPosition = -1;
+    private GameObject loadingOverlay;
+    private RectTransform loadingSpinner;
+
+    private void ShowRestoreLoadingScreen()
+    {
+        if (loadingOverlay != null) return;
+        loadingOverlay = new GameObject("Session Restore Loading Screen",
+            typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+        Canvas canvas = loadingOverlay.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.overrideSorting = true;
+        canvas.sortingOrder = 32767;
+        CanvasScaler scaler = loadingOverlay.GetComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920, 1080);
+
+        GameObject backdrop = new GameObject("Backdrop", typeof(RectTransform), typeof(Image));
+        backdrop.transform.SetParent(loadingOverlay.transform, false);
+        RectTransform rect = (RectTransform)backdrop.transform;
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+        Image background = backdrop.GetComponent<Image>();
+        background.color = loadingBackgroundColor;
+        background.raycastTarget = true;
+
+        GameObject spinner = new GameObject("Spinner", typeof(RectTransform));
+        spinner.transform.SetParent(backdrop.transform, false);
+        loadingSpinner = (RectTransform)spinner.transform;
+        loadingSpinner.anchorMin = loadingSpinner.anchorMax = new Vector2(0.5f, 0.5f);
+        loadingSpinner.sizeDelta = new Vector2(90f, 90f);
+        loadingSpinner.anchoredPosition = new Vector2(0f, 25f);
+        for (int i = 0; i < 12; i++)
+        {
+            GameObject segment = new GameObject("Segment " + i, typeof(RectTransform), typeof(Image));
+            segment.transform.SetParent(loadingSpinner, false);
+            RectTransform segmentRect = (RectTransform)segment.transform;
+            segmentRect.anchorMin = segmentRect.anchorMax = new Vector2(0.5f, 0.5f);
+            segmentRect.sizeDelta = new Vector2(9f, 24f);
+            float angle = i * 30f;
+            float radians = angle * Mathf.Deg2Rad;
+            segmentRect.anchoredPosition = new Vector2(Mathf.Sin(radians), Mathf.Cos(radians)) * 37f;
+            segmentRect.localRotation = Quaternion.Euler(0f, 0f, -angle);
+            Color color = loadingSpinnerColor;
+            color.a *= Mathf.Lerp(0.15f, 1f, (i + 1f) / 12f);
+            Image line = segment.GetComponent<Image>();
+            line.color = color;
+            line.raycastTarget = false;
+        }
+
+        GameObject text = new GameObject("Loading Text", typeof(RectTransform), typeof(TextMeshProUGUI));
+        text.transform.SetParent(backdrop.transform, false);
+        rect = (RectTransform)text.transform;
+        rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.sizeDelta = new Vector2(900f, 70f);
+        rect.anchoredPosition = new Vector2(0f, -100f);
+        TextMeshProUGUI label = text.GetComponent<TextMeshProUGUI>();
+        label.text = loadingScreenText;
+        if (loadingScreenFont != null) label.font = loadingScreenFont;
+        label.fontSize = 36;
+        label.color = Color.white;
+        label.alignment = TextAlignmentOptions.Center;
+        label.raycastTarget = false;
+    }
+
+    internal void TickLoadingScreen(float deltaTime)
+    {
+        if (loadingSpinner != null)
+            loadingSpinner.Rotate(0f, 0f, -loadingSpinnerSpeed * deltaTime);
+    }
+
+    internal void DismissRestoreLoadingScreen()
+    {
+        if (loadingOverlay == null) return;
+        Destroy(loadingOverlay);
+        loadingOverlay = null;
+        loadingSpinner = null;
+    }
+
+    private void ResetInterruptedTyping()
+    {
+        // Yarn stops ALL coroutines on its dialogue views in StartDialogue,
+        // but that leaves these bookkeeping flags and queued jobs behind.
+        typewriterQueue.Clear();
+        activeTypewriterJob = null;
+        typewriterQueueRunning = false;
+        isTyping = false;
+        isRevealingText = false;
+        skipRequested = false;
+        if (focusCoroutine != null) { StopCoroutine(focusCoroutine); focusCoroutine = null; }
+        if (restartCoroutine != null) { StopCoroutine(restartCoroutine); restartCoroutine = null; }
+        if (automaticRestartCoroutine != null) { StopCoroutine(automaticRestartCoroutine); automaticRestartCoroutine = null; }
+        restartingDialogue = false;
+    }
+
+    private IEnumerator RestoreSavedSession()
+    {
+        ShowRestoreLoadingScreen();
+        // Crucially: this enumerator is hosted by GameSaveSystem.
+        // Wait for the runner's automatic Start and the UI's initialization.
+        yield return null;
+        yield return null;
+
+        GameSaveSystem.SaveData saved = null;
+        try { saved = GameSaveSystem.Load(); }
+        catch (Exception ex) { Debug.LogError("Save file load failed: " + ex); }
+
+        if (saved == null && m_runner != null)
+        {
+            StartCoroutine(
+                    PlayTrack("smoke and wood")
+                );
+            historyStartNode = m_runner.startNode;
+
+        }
+        if (saved != null)
+        {
+            restoringSession = true;
+            suppressDialogueComplete = true;
+            restoreChoiceCount = saved.version >= 2 && saved.choices != null
+                ? Mathf.Min(saved.choices.Count, 512) : 0;
+            replayedChoiceCount = 0;
+            restorePendingYarnLine = saved.version >= 3 && saved.typingJobs != null &&
+                saved.typingJobs.Any(j => j != null && j.isYarnLine);
+            restoreTargetLineOrdinal = saved.pendingLineOrdinal;
+            restoreTargetNode = saved.pendingLineNode;
+            pendingRestoreLineCallback = null;
+            try
+            {
+                ResetInterruptedTyping();
+                if (m_runner != null)
+                {
+                    m_runner.Stop();
+                    dialogueOptions = null;
+                    onOptionSelected = null;
+                    awaitingOptions = false;
+                    // The saved flags may control which options are available.
+                    // Replay may change them, so we apply them again afterward.
+                    RestoreYarnVariables(saved);
+                    // Starting dialogue stops coroutines only on the *view*,
+                    // never on the GameSaveSystem driver running this enumerator.
+                    historyStartNode = saved.version >= 2 &&
+                        !string.IsNullOrEmpty(saved.historyStartNode)
+                        ? saved.historyStartNode : saved.node;
+                    if (string.IsNullOrEmpty(historyStartNode) ||
+                        !m_runner.NodeExists(historyStartNode))
+                        historyStartNode = m_runner.startNode;
+                    lineOrdinalSinceChoice = 0;
+                    m_runner.StartDialogue(historyStartNode);
+                    ResetInterruptedTyping();
+                }
+            }
+            catch (Exception ex) { Debug.LogError("Yarn restore initialization failed: " + ex); }
+
+            // Fast-forward prior selections using their actual Yarn option IDs.
+            // Limit total time and selections, so a corrupt save can't trap the UI.
+            float deadline = Time.realtimeSinceStartup + 6f;
+            int choiceIndex = 0;
+            int choiceCount = saved.version >= 2 && saved.choices != null
+                ? Mathf.Min(saved.choices.Count, 512) : 0;
+            while (choiceIndex < choiceCount && Time.realtimeSinceStartup < deadline)
+            {
+                if (!awaitingOptions || onOptionSelected == null)
+                {
+                    yield return null;
+                    continue;
+                }
+                GameSaveSystem.ChoiceState chosen = saved.choices[choiceIndex];
+                bool matching = dialogueOptions != null && dialogueOptions.Any(o =>
+                    o.DialogueOptionID == chosen.optionId) &&
+                    (string.IsNullOrEmpty(chosen.node) || m_runner == null ||
+                     m_runner.CurrentNodeName == chosen.node);
+                if (!matching)
+                {
+                    Debug.LogWarning("Yarn options changed since the save; using the saved node instead.");
+                    break;
+                }
+                try
+                {
+                    if (m_runner != null && m_runner.VariableStorage != null &&
+                        chosen.inputValue != null)
+                        m_runner.VariableStorage.SetValue("$inputVariable", chosen.inputValue);
+                    SelectDialogueOption(chosen.optionId);
+                    choiceIndex++;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError("Yarn option replay failed: " + ex);
+                    break;
+                }
+                yield return null;
+            }
+            // Handle no-history saves, or an older save from a mid-node point.
+            // The old save format cannot recover an exact previous selection path.
+            bool usedFallback = choiceIndex < choiceCount;
+            if (usedFallback && m_runner != null &&
+                !string.IsNullOrEmpty(saved.node) && m_runner.NodeExists(saved.node))
+            {
+                try
+                {
+                    m_runner.Stop();
+                    dialogueOptions = null;
+                    onOptionSelected = null;
+                    awaitingOptions = false;
+                    lineOrdinalSinceChoice = 0;
+                    m_runner.StartDialogue(saved.node);
+                    ResetInterruptedTyping();
+                    historyStartNode = saved.node;
+                }
+                catch (Exception ex) { Debug.LogWarning("Yarn fallback failed: " + ex.Message); }
+            }
+
+            // Waiting for a prompt is bounded. It is never a precondition for
+            // dismissing the loading screen.
+            deadline = Time.realtimeSinceStartup + 3f;
+            while (m_runner != null && m_runner.IsDialogueRunning && !awaitingOptions &&
+                   pendingRestoreLineCallback == null && Time.realtimeSinceStartup < deadline)
+                yield return null;
+
+            // If replay ended without any actionable options, try the saved
+            // node before declaring a failure. This keeps old saves usable.
+            if (!awaitingOptions && pendingRestoreLineCallback == null && m_runner != null &&
+                !string.IsNullOrEmpty(saved.node) && m_runner.NodeExists(saved.node) &&
+                saved.node != historyStartNode)
+            {
+                try
+                {
+                    m_runner.Stop();
+                    dialogueOptions = null;
+                    onOptionSelected = null;
+                    awaitingOptions = false;
+                    lineOrdinalSinceChoice = 0;
+                    m_runner.StartDialogue(saved.node);
+                    ResetInterruptedTyping();
+                    usedFallback = true;
+                    historyStartNode = saved.node;
+                }
+                catch (Exception ex) { Debug.LogWarning("Prompt recovery failed: " + ex.Message); }
+                deadline = Time.realtimeSinceStartup + 2f;
+                while (m_runner.IsDialogueRunning && !awaitingOptions &&
+                       pendingRestoreLineCallback == null && Time.realtimeSinceStartup < deadline)
+                    yield return null;
+            }
+            if (!awaitingOptions && pendingRestoreLineCallback == null && m_runner != null &&
+                !string.IsNullOrEmpty(m_runner.startNode) &&
+                m_runner.NodeExists(m_runner.startNode))
+            {
+                // Final recovery: prefer a functioning command prompt to a
+                // frozen input field if old/corrupt VM history cannot replay.
+                try
+                {
+                    m_runner.Stop();
+                    dialogueOptions = null;
+                    onOptionSelected = null;
+                    awaitingOptions = false;
+                    lineOrdinalSinceChoice = 0;
+                    m_runner.StartDialogue(m_runner.startNode);
+                    ResetInterruptedTyping();
+                    usedFallback = true;
+                    historyStartNode = m_runner.startNode;
+                }
+                catch (Exception ex) { Debug.LogWarning("Start node recovery failed: " + ex.Message); }
+                deadline = Time.realtimeSinceStartup + 2f;
+                while (m_runner.IsDialogueRunning && !awaitingOptions &&
+                       pendingRestoreLineCallback == null && Time.realtimeSinceStartup < deadline)
+                    yield return null;
+            }
+            if (!awaitingOptions && pendingRestoreLineCallback == null)
+                Debug.LogWarning("Saved Yarn dialogue did not produce an options prompt or a resumable line.");
+
+            try
+            {
+                // Yarn replay may reset flags, variables, and display state.
+                // Reapply saved values AFTER reaching the restored prompt.
+                RestoreGameState(saved);
+                GameSaveSystem.RestoreScene(saved);
+                Canvas.ForceUpdateCanvases();
+            }
+            catch (Exception ex) { Debug.LogError("Session state restore failed: " + ex); }
+
+            // Preserve the entire replay history for the NEXT save, not just
+            // selections made after resuming.
+            choiceHistory.Clear();
+            if (!usedFallback && saved.choices != null) choiceHistory.AddRange(saved.choices);
+            // Drop any stale jobs created before/while replaying, but keep the
+            // runner's intercepted RunLine callback. Resume saved jobs only
+            // after the exact terminal snapshot has been restored.
+            ResetInterruptedTyping();
+            restoringSession = false;
+            suppressDialogueComplete = false;
+            ResumeSavedTyping(saved);
+            if (awaitingOptions && onOptionSelected != null)
+                TryEnableCommandInput();
+            yield return null;
+            if (m_scrollRect != null) m_scrollRect.normalizedPosition = saved.scroll;
+        }
+        // Guarantee that no previously open window remains as an invisible
+        // raycast-blocking overlay. Closed windows are left closed.
+        GameSaveSystem.MinimizeAllWindows();
+        DismissRestoreLoadingScreen();
+    }
+
+    private void ResumeSavedTyping(GameSaveSystem.SaveData saved)
+    {
+        if (saved.version < 3 || saved.typingJobs == null) return;
+        bool hasYarnJob = saved.typingJobs.Any(j => j != null && j.isYarnLine);
+        if (hasYarnJob && pendingRestoreLineCallback == null)
+        {
+            Debug.LogWarning("Could not locate the saved Yarn line during replay; " +
+                "skipping its unfinished text to avoid freezing the dialogue.");
+            return;
+        }
+        foreach (var state in saved.typingJobs)
+        {
+            if (state == null || string.IsNullOrEmpty(state.text)) continue;
+            var job = new TypewriterJob
+            {
+                Text = state.text,
+                ResumeAt = Mathf.Clamp(state.charactersWritten, 0, state.text.Length),
+                CharactersWritten = Mathf.Clamp(state.charactersWritten, 0, state.text.Length),
+                Skip = state.skip,
+                Unskippable = state.unskippable,
+                IsYarnLine = state.isYarnLine
+            };
+            if (state.isYarnLine)
+            {
+                job.OnComplete = () =>
+                {
+                    Action callback = pendingRestoreLineCallback;
+                    pendingRestoreLineCallback = null;
+                    callback?.Invoke();
+                };
+            }
+            typewriterQueue.Enqueue(job);
+        }
+        if (typewriterQueue.Count > 0)
+        {
+            typewriterQueueRunning = true;
+            StartCoroutine(ProcessTypewriterQueue());
+        }
+    }
+
+    private void TryRestoreDeferredCaret()
+    {
+        if (pendingCaretPosition < 0 || restoringSession || m_command == null) return;
+        if (!m_command.isActiveAndEnabled || !m_command.gameObject.activeInHierarchy ||
+            !m_command.interactable || !m_command.isFocused || m_command.textComponent == null)
+            return;
+        try
+        {
+            m_command.ForceLabelUpdate();
+            m_command.textComponent.ForceMeshUpdate();
+            var info = m_command.textComponent.textInfo;
+            if (info == null || info.characterInfo == null || info.characterInfo.Length == 0) return;
+            m_command.caretPosition = Mathf.Clamp(pendingCaretPosition, 0, m_command.text.Length);
+            pendingCaretPosition = -1;
+        }
+        catch (NullReferenceException) { /* TMP layout may need another active frame. */ }
+    }
+
+    internal void CaptureGameState(GameSaveSystem.SaveData data)
+    {
+        data.terminal = m_result != null ? m_result.text : "";
+        data.pendingLineOrdinal = lineOrdinalSinceChoice;
+        data.pendingLineNode = m_runner != null ? m_runner.CurrentNodeName : "";
+        // Snapshot job text and current character offset on Unity's main thread.
+        // Worker threads write only the serialized JSON, never Unity objects.
+        if (activeTypewriterJob != null)
+            data.typingJobs.Add(CaptureTypingJob(activeTypewriterJob));
+        foreach (TypewriterJob job in typewriterQueue)
+            data.typingJobs.Add(CaptureTypingJob(job));
+        data.command = m_command != null ? m_command.text : "";
+        data.commandInteractable = m_command != null && m_command.interactable;
+        data.commandCaret = pendingCaretPosition >= 0 ? pendingCaretPosition :
+            (m_command != null && m_command.isActiveAndEnabled && m_command.textComponent != null &&
+             m_command.textComponent.textInfo != null ? m_command.caretPosition : 0);
+        data.scroll = m_scrollRect != null ? m_scrollRect.normalizedPosition : Vector2.zero;
+        data.rooms = rooms != null ? rooms.Reverse().ToArray() : new string[0];
+        data.node = m_runner != null ? m_runner.CurrentNodeName : "";
+        data.waitingForCommand = awaitingOptions;
+        data.choices = new List<GameSaveSystem.ChoiceState>(choiceHistory);
+        data.historyStartNode = !string.IsNullOrEmpty(historyStartNode)
+            ? historyStartNode : (m_runner != null ? m_runner.startNode : "");
+        if (m_image != null && m_image.sprite != null) data.image = m_image.sprite.name;
+        if (m_gameMusic != null && m_gameMusic.clip != null)
+        {
+            data.music = playingTrackName;
+            data.musicTime = m_gameMusic.time;
+            data.musicPlaying = m_gameMusic.isPlaying;
+            data.musicVolume = m_gameMusic.volume;
+        }
+        if (m_runner != null && m_runner.VariableStorage != null)
+        {
+            var values = m_runner.VariableStorage.GetAllVariables();
+            foreach (var v in values.FloatVariables)
+                data.floats.Add(new GameSaveSystem.FloatValue { key = v.Key, value = v.Value });
+            foreach (var v in values.StringVariables)
+                data.strings.Add(new GameSaveSystem.StringValue { key = v.Key, value = v.Value });
+            foreach (var v in values.BoolVariables)
+                data.bools.Add(new GameSaveSystem.BoolValue { key = v.Key, value = v.Value });
+        }
+    }
+
+    private static GameSaveSystem.TypingState CaptureTypingJob(TypewriterJob job)
+    {
+        return new GameSaveSystem.TypingState
+        {
+            text = job.Text,
+            charactersWritten = job.CharactersWritten,
+            skip = job.Skip,
+            unskippable = job.Unskippable,
+            isYarnLine = job.IsYarnLine
+        };
+    }
+
+    private void RestoreYarnVariables(GameSaveSystem.SaveData data)
+    {
+        if (m_runner == null || m_runner.VariableStorage == null) return;
+        var floats = new Dictionary<string, float>();
+        var strings = new Dictionary<string, string>();
+        var bools = new Dictionary<string, bool>();
+        if (data.floats != null) foreach (var v in data.floats) floats[v.key] = v.value;
+        if (data.strings != null) foreach (var v in data.strings) strings[v.key] = v.value;
+        if (data.bools != null) foreach (var v in data.bools) bools[v.key] = v.value;
+        m_runner.VariableStorage.SetAllVariables(floats, strings, bools);
+    }
+
+    private void RestoreGameState(GameSaveSystem.SaveData data)
+    {
+        rooms = new Stack<string>(data.rooms ?? new string[0]);
+        RestoreYarnVariables(data);
+        if (m_result != null) m_result.text = data.terminal ?? "";
+        if (m_command != null)
+        {
+            m_command.SetTextWithoutNotify(data.command ?? "");
+            pendingCaretPosition = Mathf.Clamp(data.commandCaret, 0, m_command.text.Length);
+            // A saved enabled input field isn't usable without Yarn's live
+            // onOptionSelected callback. Never fake that callback/UI state.
+            m_command.interactable = awaitingOptions && onOptionSelected != null;
+        }
+        if (m_scrollRect != null) m_scrollRect.normalizedPosition = data.scroll;
+        if (m_image != null && !string.IsNullOrEmpty(data.image))
+        {
+            Sprite sprite = Resources.Load<Sprite>(data.image);
+            if (sprite != null) m_image.sprite = sprite;
+        }
+        if (m_gameMusic != null && !string.IsNullOrEmpty(data.music))
+        {
+            
+            if (data.music != "")
+            {
+                StartCoroutine(
+                    PlayTrack(data.music)
+                );
+            }
+            
+            
+        }
+        
+    }
+
+    /// <summary>Intentionally not connected to any UI or terminal command.</summary>
+    public void DeleteCurrentSave() { 
+        GameSaveSystem.DeleteCurrentSave();
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
     }
 }
